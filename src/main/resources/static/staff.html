@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Staff</title>
+  <link rel="stylesheet" href="/style.css">
+  <!-- Draws the QR images. Needs internet. -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+</head>
+<body>
+  <!-- Login -->
+  <div id="login-box" class="card narrow">
+    <h1>Staff login</h1>
+    <label for="username">Username</label>
+    <input id="username" autocomplete="username">
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password">
+    <div class="actions"><button id="login-button">Log in</button></div>
+    <p id="login-error" class="error"></p>
+  </div>
+
+  <!-- Dashboard, shown after login -->
+  <div id="dashboard" class="page wide hidden">
+    <div class="row no-print">
+      <div>
+        <h1 id="who"></h1>
+        <div id="role" class="muted"></div>
+      </div>
+      <button id="logout-button" class="secondary">Log out</button>
+    </div>
+    <div id="tabs" class="tabs no-print"></div>
+    <p id="message" class="no-print"></p>
+    <div id="receipt" class="no-print"></div>
+    <div id="panel"></div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    // Only these sections have pages. A role may list more; unknown ones are skipped.
+    // "needs" is the role section that allows the tab (default: its own name).
+    const SECTIONS = {
+      orders:    { label: 'Orders',          show: showOrders },
+      neworder:  { label: 'New order',       show: showNewOrder, needs: 'orders' },
+      qr:        { label: 'Table QR codes',  show: showQr,       needs: 'orders' },
+      menu:      { label: 'Menu',            show: showMenu },
+      staff:     { label: 'Staff',           show: showStaff },
+      customers: { label: 'Customers',       show: showCustomers }
+    };
+
+    let auth = null;          // the Basic token, kept for this browser tab only
+    let timer = null;         // refresh timer of the Orders tab
+    const phones = {};        // table code -> phone number typed for payment
+    const methods = {};       // table code -> payment method chosen
+
+    const panel = document.getElementById('panel');
+    const message = document.getElementById('message');
+    const receiptBox = document.getElementById('receipt');
+
+    function say(text, isError) {
+      message.textContent = text || '';
+      message.className = isError ? 'error' : 'ok';
+    }
+
+    // ---------- Login ----------
+
+    async function login() {
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      const error = document.getElementById('login-error');
+      error.textContent = '';
+      try {
+        const token = basicToken(username, password);
+        const profile = await api('/api/auth/login', 'POST', { username: username, password: password });
+        auth = token;
+        sessionStorage.setItem('auth', token);
+        openDashboard(profile);
+      } catch (e) {
+        error.textContent = e.message;
+      }
+    }
+
+    function logout() {
+      clearInterval(timer);
+      auth = null;
+      sessionStorage.removeItem('auth');
+      document.getElementById('password').value = '';
+      document.getElementById('dashboard').classList.add('hidden');
+      document.getElementById('login-box').classList.remove('hidden');
+    }
+
+    // A 401 means the saved login no longer works, so go back to the login box.
+    function handleError(e) {
+      if (e.status === 401) { logout(); return; }
+      say(e.message, true);
+    }
+
+    function openDashboard(profile) {
+      document.getElementById('login-box').classList.add('hidden');
+      document.getElementById('dashboard').classList.remove('hidden');
+      document.getElementById('who').textContent = profile.fullName;
+      document.getElementById('role').textContent = profile.role;
+
+      const tabs = document.getElementById('tabs');
+      tabs.replaceChildren();
+      const names = Object.keys(SECTIONS).filter(
+        name => profile.dashboardSections.includes(SECTIONS[name].needs || name));
+      for (const name of names) {
+        const button = el('button', SECTIONS[name].label);
+        button.dataset.section = name;
+        button.onclick = () => openSection(name);
+        tabs.append(button);
+      }
+      if (names.length > 0) openSection(names[0]);
+    }
+
+    function openSection(name) {
+      clearInterval(timer);
+      say('');
+      receiptBox.replaceChildren();
+      for (const button of document.getElementById('tabs').children) {
+        button.classList.toggle('active', button.dataset.section === name);
+      }
+      panel.replaceChildren(el('p', 'Loading...', 'muted'));
+      SECTIONS[name].show();
+    }
+
+    // ---------- Orders: kitchen queue and counter payment ----------
+
+    const NEXT = {
+      PENDING:   { status: 'PREPARING', label: 'Start preparing' },
+      PREPARING: { status: 'READY',     label: 'Mark ready' },
+      READY:     { status: 'SERVED',    label: 'Mark served' }
+    };
+
+    async function showOrders() {
+      await refreshOrders();
+      timer = setInterval(refreshOrders, 5000);
+    }
+
+    async function refreshOrders() {
+      try {
+        const [orders, tables] = await Promise.all([
+          api('/api/staff/orders', 'GET', null, auth),
+          api('/api/staff/tables', 'GET', null, auth)
+        ]);
+        drawOrders(orders, tables);
+      } catch (e) { handleError(e); }
+    }
+
+    function drawOrders(orders, tables) {
+      const tableById = {};
+      for (const t of tables) tableById[t.id] = t;
+
+      const queue = el('div', null, 'grid');
+      for (const order of orders) queue.append(orderCard(order, tableById[order.tableId]));
+
+      // A table can be paid when every open order on it is SERVED.
+      const byTable = {};
+      for (const order of orders) (byTable[order.tableId] = byTable[order.tableId] || []).push(order);
+      const payBox = el('div', null, 'grid');
+      for (const tableId of Object.keys(byTable)) {
+        const group = byTable[tableId];
+        if (group.every(o => o.status === 'SERVED') && tableById[tableId]) {
+          payBox.append(payCard(tableById[tableId], group));
+        }
+      }
+
+      panel.replaceChildren(
+        el('h2', 'Kitchen queue'),
+        orders.length ? queue : el('p', 'No open orders.', 'muted'),
+        el('h2', 'Ready to pay'),
+        payBox.children.length ? payBox : el('p', 'No table is ready to pay.', 'muted')
+      );
+    }
+
+    function orderCard(order, table) {
+      const card = el('div', null, 'card');
+      const head = el('div', null, 'row');
+      head.append(
+        el('span', table ? 'Table ' + table.tableNumber : 'Table ?', 'name'),
+        el('span', order.status, 'badge ' + order.status));
+      card.append(head, el('div', timeText(order.createdAt), 'muted'));
+
+      for (const item of order.items) {
+        card.append(el('div', item.quantity + ' × ' + item.name));
+        if (item.notes) card.append(el('div', 'Note: ' + item.notes, 'muted'));
+      }
+      card.append(el('div', money(orderTotal(order)), 'muted'));
+
+      const actions = el('div', null, 'actions');
+      const next = NEXT[order.status];
+      if (next) {
+        const button = el('button', next.label);
+        button.onclick = () => changeStatus(order.id, next.status);
+        actions.append(button);
+      }
+      if (order.status === 'PENDING') {
+        const cancel = el('button', 'Cancel order', 'secondary');
+        cancel.onclick = () => changeStatus(order.id, 'CANCELLED');
+        actions.append(cancel);
+      }
+      card.append(actions);
+      return card;
+    }
+
+    async function changeStatus(orderId, status) {
+      try {
+        await api('/api/staff/orders/' + orderId + '/status', 'PATCH', { status: status }, auth);
+        say('');
+        refreshOrders();
+      } catch (e) { handleError(e); }
+    }
+
+    function payCard(table, orders) {
+      const card = el('div', null, 'card');
+      const total = orders.reduce((sum, o) => sum + orderTotal(o), 0);
+      const head = el('div', null, 'row');
+      head.append(el('span', 'Table ' + table.tableNumber, 'name'), el('strong', money(total)));
+      card.append(head);
+
+      card.append(el('label', 'Payment method'));
+      const method = el('select');
+      for (const [value, text] of [['COUNTER', 'Pay at the counter'], ['ONLINE_TEST', 'Online payment (test mode)']]) {
+        const option = el('option', text);
+        option.value = value;
+        method.append(option);
+      }
+      method.value = methods[table.qrCodeHash] || 'COUNTER';
+      method.onchange = () => { methods[table.qrCodeHash] = method.value; };
+      card.append(method);
+
+      card.append(el('label', 'Customer phone number (optional, for loyalty points)'));
+      const phone = el('input');
+      phone.type = 'tel';
+      phone.value = phones[table.qrCodeHash] || '';
+      phone.oninput = () => { phones[table.qrCodeHash] = phone.value; };   // survives the 5-second redraw
+      card.append(phone);
+
+      const button = el('button', 'Confirm payment');
+      button.onclick = () => pay(table);
+      const payActions = el('div', null, 'actions');
+      payActions.append(button);
+      card.append(payActions);
+      return card;
+    }
+
+    async function pay(table) {
+      const phone = (phones[table.qrCodeHash] || '').trim();
+      const body = { method: methods[table.qrCodeHash] || 'COUNTER' };
+      if (phone) body.phoneNumber = phone;
+      try {
+        const receipt = await api('/api/staff/orders/table/' + encodeURIComponent(table.qrCodeHash) + '/pay',
+                                  'POST', body, auth);
+        delete phones[table.qrCodeHash];
+        delete methods[table.qrCodeHash];
+        say('Table ' + table.tableNumber + ' is paid.');
+        showReceipt(receipt);
+        refreshOrders();
+      } catch (e) { handleError(e); }
+    }
+
+    function showReceipt(receipt) {
+      const card = el('div', null, 'card');
+      card.append(el('h2', 'Receipt · Table ' + receipt.tableNumber));
+      for (const item of receipt.items) {
+        const line = el('div', null, 'row');
+        line.append(el('span', item.quantity + ' × ' + item.name),
+                    el('span', money(Number(item.unitPrice) * item.quantity)));
+        card.append(line);
+      }
+      const totalLine = el('div', null, 'row');
+      totalLine.append(el('strong', 'Total'), el('strong', money(receipt.total)));
+      card.append(totalLine);
+
+      const how = receipt.method === 'ONLINE_TEST' ? 'Online payment (test mode)' : 'Paid at the counter';
+      card.append(el('div', how + (receipt.providerRef ? ' · ' + receipt.providerRef : ''), 'muted'));
+      card.append(el('div', new Date(receipt.paidAt).toLocaleString(), 'muted'));
+      if (receipt.customerPhone) card.append(el('div', 'Loyalty number: ' + receipt.customerPhone, 'muted'));
+
+      const close = el('button', 'Close', 'secondary');
+      close.onclick = () => receiptBox.replaceChildren();
+      const actions = el('div', null, 'actions');
+      actions.append(close);
+      card.append(actions);
+      receiptBox.replaceChildren(card);
+    }
+
+    // ---------- New order: staff choose the food for a table ----------
+
+    async function showNewOrder() {
+      try {
+        const tables = await api('/api/staff/tables', 'GET', null, auth);
+        tables.sort((a, b) => a.tableNumber - b.tableNumber);
+        if (tables.length === 0) {
+          panel.replaceChildren(el('p', 'There are no tables yet.', 'muted'));
+          return;
+        }
+
+        const select = el('select');
+        for (const table of tables) {
+          const option = el('option', 'Table ' + table.tableNumber + (table.status === 'OCCUPIED' ? ' (occupied)' : ''));
+          option.value = table.qrCodeHash;
+          select.append(option);
+        }
+
+        const dishes = el('div');
+        const cart = {};     // dish id -> { dish, quantity, qtyText, noteInput }
+        const count = el('span', '0 items');
+        const total = el('strong', '0.00');
+        const send = el('button', 'Send to kitchen');
+        send.disabled = true;
+
+        const update = () => {
+          let n = 0, sum = 0;
+          for (const line of Object.values(cart)) {
+            n += line.quantity;
+            sum += line.quantity * Number(line.dish.price);
+          }
+          count.textContent = n + (n === 1 ? ' item' : ' items');
+          total.textContent = money(sum);
+          send.disabled = n === 0;
+        };
+
+        // The menu is loaded for the chosen table. Choosing another table starts a new order.
+        const loadMenu = async () => {
+          try {
+            const menu = await api('/api/menu?t=' + encodeURIComponent(select.value));
+            dishes.replaceChildren();
+            for (const key of Object.keys(cart)) delete cart[key];
+            let lastCategory = null;
+            for (const dish of menu) {
+              if (dish.category !== lastCategory) {
+                dishes.append(el('h2', dish.category));
+                lastCategory = dish.category;
+              }
+              dishes.append(dishCard(dish, cart, update));
+            }
+            update();
+          } catch (e) { handleError(e); }
+        };
+        select.onchange = loadMenu;
+
+        send.onclick = async () => {
+          const lines = Object.values(cart)
+            .filter(line => line.quantity > 0)
+            .map(line => ({
+              menuItemId: line.dish.id,
+              quantity: line.quantity,
+              notes: line.noteInput.value.trim() || null
+            }));
+          const tableName = select.options[select.selectedIndex].text.replace(' (occupied)', '');
+          send.disabled = true;
+          try {
+            await api('/api/staff/orders/table/' + encodeURIComponent(select.value), 'POST', lines, auth);
+            say('Order sent to the kitchen for ' + tableName + '.');
+            loadMenu();      // clears the order
+          } catch (e) { handleError(e); update(); }
+        };
+
+        const bar = el('div', null, 'cart-bar');
+        const barRow = el('div', null, 'row');
+        const summary = el('div');
+        summary.append(count, ' · ', total);
+        barRow.append(summary, send);
+        bar.append(barRow);
+
+        panel.replaceChildren(el('label', 'Table'), select, dishes, bar);
+        loadMenu();
+      } catch (e) { handleError(e); }
+    }
+
+    // One dish with + and - buttons and a note box. "cart" is filled as staff choose.
+    function dishCard(dish, cart, onChange) {
+      const card = el('div', null, 'card');
+      const row = el('div', null, 'row');
+
+      const info = el('div');
+      info.append(el('div', dish.name, 'name'));
+      const allergens = dish.allergens || [];
+      info.append(el('div', money(dish.price) + (allergens.length ? ' · Contains: ' + allergens.join(', ') : ''), 'muted'));
+
+      const qty = el('div', null, 'qty');
+      const minus = el('button', '-', 'secondary');
+      const qtyText = el('span', '0');
+      const plus = el('button', '+', 'secondary');
+      qty.append(minus, qtyText, plus);
+      row.append(info, qty);
+
+      const noteInput = el('input', null, 'note hidden');
+      noteInput.placeholder = 'Note for the kitchen (optional)';
+      card.append(row, noteInput);
+
+      cart[dish.id] = { dish: dish, quantity: 0, qtyText: qtyText, noteInput: noteInput };
+      const change = (step) => {
+        const line = cart[dish.id];
+        line.quantity = Math.max(0, line.quantity + step);
+        qtyText.textContent = line.quantity;
+        noteInput.classList.toggle('hidden', line.quantity === 0);
+        onChange();
+      };
+      minus.onclick = () => change(-1);
+      plus.onclick = () => change(1);
+      return card;
+    }
+
+    // ---------- Menu (admin): add, edit, change price, disable ----------
+
+    async function showMenu() {
+      try {
+        const items = await api('/api/admin/menu-items', 'GET', null, auth);
+
+        const formBox = el('div', null, 'card');
+        openItemForm(formBox, null);
+
+        const table = el('table', null, 'list');
+        const head = el('tr');
+        for (const title of ['Name', 'Category', 'Price', 'Allergens', 'On menu', '']) head.append(el('th', title));
+        table.append(head);
+
+        for (const item of items) {
+          const row = el('tr');
+          row.append(el('td', item.name), el('td', item.category), el('td', money(item.price)),
+                     el('td', (item.allergens || []).join(', ')), el('td', item.available ? 'Yes' : 'Hidden'));
+
+          const edit = el('button', 'Edit', 'secondary');
+          edit.onclick = () => { openItemForm(formBox, item); formBox.scrollIntoView(); };
+
+          const toggle = el('button', item.available ? 'Disable' : 'Enable', 'secondary');
+          toggle.onclick = async () => {
+            try {
+              await api('/api/admin/menu-items/' + item.id + '/available', 'PATCH', { available: !item.available }, auth);
+              say(item.name + (item.available ? ' is hidden from guests.' : ' is back on the menu.'));
+              showMenu();
+            } catch (e) { handleError(e); }
+          };
+
+          const cell = el('td');
+          cell.append(edit, ' ', toggle);
+          row.append(cell);
+          table.append(row);
+        }
+        panel.replaceChildren(formBox, el('h2', 'Menu items'), table);
+      } catch (e) { handleError(e); }
+    }
+
+    // Fills the form box for a new item (item = null) or for editing an item.
+    function openItemForm(box, item) {
+      box.replaceChildren(el('h2', item ? 'Edit: ' + item.name : 'New menu item'));
+      const fields = {};
+      const spec = [['name', 'Name', 'text'], ['category', 'Category', 'text'], ['price', 'Price', 'number'],
+                    ['ingredients', 'Ingredients (separated by commas)', 'text'],
+                    ['allergens', 'Allergens (separated by commas)', 'text']];
+      for (const [key, label, type] of spec) {
+        box.append(el('label', label));
+        fields[key] = el('input');
+        fields[key].type = type;
+        if (type === 'number') { fields[key].step = '0.01'; fields[key].min = '0'; }
+        box.append(fields[key]);
+      }
+      if (item) {
+        fields.name.value = item.name;
+        fields.category.value = item.category;
+        fields.price.value = item.price;
+        fields.ingredients.value = (item.ingredients || []).join(', ');
+        fields.allergens.value = (item.allergens || []).join(', ');
+      }
+
+      const split = (text) => text.split(',').map(part => part.trim()).filter(part => part);
+      const save = el('button', item ? 'Save changes' : 'Add item');
+      save.onclick = async () => {
+        const body = {
+          name: fields.name.value,
+          category: fields.category.value,
+          price: fields.price.value === '' ? null : Number(fields.price.value),
+          ingredients: split(fields.ingredients.value),
+          allergens: split(fields.allergens.value)
+        };
+        try {
+          if (item) await api('/api/admin/menu-items/' + item.id, 'PUT', body, auth);
+          else await api('/api/admin/menu-items', 'POST', body, auth);
+          say(item ? 'Saved.' : 'Item added.');
+          showMenu();
+        } catch (e) { handleError(e); }
+      };
+
+      const actions = el('div', null, 'actions');
+      actions.append(save);
+      if (item) {
+        const cancel = el('button', 'Cancel', 'secondary');
+        cancel.onclick = () => openItemForm(box, null);
+        actions.append(cancel);
+      }
+      box.append(actions);
+    }
+
+    // ---------- Table QR codes ----------
+
+    async function showQr() {
+      try {
+        const tables = await api('/api/staff/tables', 'GET', null, auth);
+        tables.sort((a, b) => a.tableNumber - b.tableNumber);
+
+        const address = el('input');
+        address.value = location.origin;
+        const grid = el('div', null, 'grid');
+        const draw = () => {
+          grid.replaceChildren();
+          const base = address.value.trim().replace(/\/+$/, '');
+          if (!/^https?:\/\//.test(base)) {
+            grid.append(el('p', 'The address must start with http:// or https://', 'error'));
+            return;
+          }
+          for (const table of tables) grid.append(qrCard(table, base));
+        };
+        address.oninput = draw;
+        draw();
+
+        const print = el('button', 'Print', 'secondary');
+        print.onclick = () => window.print();
+        const controls = el('div', null, 'no-print');
+        controls.append(
+          el('p', 'Each table has its own code. Print these and put one on each table.', 'muted'),
+          el('label', 'Address guests use to open this app'),
+          address,
+          el('p', 'localhost only works on this computer. For phones, use this computer\'s IP address, for example http://192.168.1.20:8080', 'muted'),
+          print);
+        panel.replaceChildren(controls, grid);
+      } catch (e) { handleError(e); }
+    }
+
+    function qrCard(table, base) {
+      const link = base + '/?t=' + encodeURIComponent(table.qrCodeHash);
+      const card = el('div', null, 'card qr');
+      card.append(el('div', 'Table ' + table.tableNumber, 'name'));
+
+      if (typeof qrcode === 'function') {
+        const qr = qrcode(0, 'M');
+        qr.addData(link);
+        qr.make();
+        const image = el('img');
+        image.src = qr.createDataURL(6, 2);
+        image.alt = 'QR code for table ' + table.tableNumber;
+        card.append(image);
+      } else {
+        card.append(el('p', 'The QR library did not load. Check your internet connection and reload.', 'error'));
+      }
+
+      const anchor = el('a', link);
+      anchor.href = link;
+      anchor.target = '_blank';
+      card.append(anchor);
+      return card;
+    }
+
+    // ---------- Staff accounts (admin) ----------
+
+    async function showStaff() {
+      try {
+        const people = await api('/api/admin/staff', 'GET', null, auth);
+
+        const form = el('div', null, 'card');
+        form.append(el('h2', 'New staff account'));
+        const fields = {};
+        for (const [key, label, type] of [['username', 'Username', 'text'], ['fullName', 'Full name', 'text'], ['password', 'Password (6 or more characters)', 'password']]) {
+          form.append(el('label', label));
+          fields[key] = el('input');
+          fields[key].type = type;
+          form.append(fields[key]);
+        }
+        const create = el('button', 'Create account');
+        create.onclick = async () => {
+          try {
+            await api('/api/admin/staff', 'POST', {
+              username: fields.username.value.trim(),
+              fullName: fields.fullName.value.trim(),
+              password: fields.password.value
+            }, auth);
+            say('Account created.');
+            showStaff();
+          } catch (e) { handleError(e); }
+        };
+        const createActions = el('div', null, 'actions');
+        createActions.append(create);
+        form.append(createActions);
+
+        const table = el('table', null, 'list');
+        const head = el('tr');
+        for (const title of ['Username', 'Name', 'Active', '']) head.append(el('th', title));
+        table.append(head);
+        for (const person of people) {
+          const row = el('tr');
+          row.append(el('td', person.username), el('td', person.fullName), el('td', person.active ? 'Yes' : 'No'));
+          const toggle = el('button', person.active ? 'Switch off' : 'Switch on', 'secondary');
+          toggle.onclick = async () => {
+            try {
+              await api('/api/admin/staff/' + person.id + '/active', 'PATCH', { active: !person.active }, auth);
+              say('');
+              showStaff();
+            } catch (e) { handleError(e); }
+          };
+          const cell = el('td');
+          cell.append(toggle);
+          row.append(cell);
+          table.append(row);
+        }
+        panel.replaceChildren(form, el('h2', 'Staff accounts'), table);
+      } catch (e) { handleError(e); }
+    }
+
+    // ---------- Customers (admin) ----------
+
+    async function showCustomers() {
+      try {
+        const customers = await api('/api/admin/customers', 'GET', null, auth);
+        customers.sort((a, b) => b.loyaltyPoints - a.loyaltyPoints);
+
+        const table = el('table', null, 'list');
+        const head = el('tr');
+        for (const title of ['Phone', 'Tier', 'Points', 'Paid orders']) head.append(el('th', title));
+        table.append(head);
+        for (const c of customers) {
+          const row = el('tr');
+          row.append(el('td', c.phoneNumber), el('td', c.tierLevel), el('td', c.loyaltyPoints), el('td', c.totalOrders));
+          table.append(row);
+        }
+        panel.replaceChildren(customers.length ? table : el('p', 'No customers yet.', 'muted'));
+      } catch (e) { handleError(e); }
+    }
+
+    // ---------- Start ----------
+
+    document.getElementById('login-button').onclick = login;
+    document.getElementById('password').onkeydown = (event) => { if (event.key === 'Enter') login(); };
+    document.getElementById('logout-button').onclick = logout;
+
+    // Page reloaded while logged in: check the saved login before showing the dashboard.
+    const saved = sessionStorage.getItem('auth');
+    if (saved) {
+      api('/api/auth/me', 'GET', null, saved)
+        .then(profile => { auth = saved; openDashboard(profile); })
+        .catch(() => sessionStorage.removeItem('auth'));
+    }
+  </script>
+</body>
+</html>

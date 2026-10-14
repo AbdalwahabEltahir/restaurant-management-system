@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Restaurant Menu</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    /* The chatbot floats at the bottom of the screen, so the guest always sees it. */
+    #chat-open { position: fixed; right: 16px; bottom: 16px; z-index: 20; border-radius: 24px;
+                 box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+    #chat-panel { position: fixed; right: 16px; bottom: 70px; z-index: 20;
+                  width: min(360px, calc(100vw - 32px)); background: #fff;
+                  border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+                  box-shadow: 0 4px 16px rgba(0,0,0,.25); }
+    #chat-log { max-height: 40vh; overflow-y: auto; margin-bottom: 8px; }
+    .chat-line { white-space: pre-line; margin-bottom: 8px; }
+    .chat-me { font-weight: 600; }
+    .chat-send { display: flex; gap: 8px; }
+    .chat-send input { margin: 0; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>Menu</h1>
+    <p id="status" class="muted">Loading...</p>
+
+    <div id="menu"></div>
+
+    <div id="orders-section" class="hidden">
+      <h2>Your orders</h2>
+      <div id="orders"></div>
+
+      <h2>Loyalty points</h2>
+      <div class="card">
+        <p class="muted">After you order, link your phone number to this table. Staff add the points to it when you pay.</p>
+        <label for="phone">Phone number</label>
+        <input id="phone" type="tel" placeholder="5555 1234">
+        <div class="actions">
+          <button id="link-button">Link my number</button>
+          <button id="points-button" class="secondary">Check my points</button>
+        </div>
+        <p id="points-result"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chatbot: a button at the bottom right opens the chat box -->
+  <button id="chat-open" class="hidden">Ask about the food</button>
+  <div id="chat-panel" class="hidden">
+    <div class="row">
+      <strong>Ask about the food</strong>
+      <button id="chat-close" class="secondary">Close</button>
+    </div>
+    <div id="chat-log"></div>
+    <div class="chat-send">
+      <input id="chat-input" maxlength="300" placeholder="Which dishes are nut free?">
+      <button id="chat-button">Ask</button>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+  <script>
+    // The table code comes from the QR link: /?t=CODE
+    const code = new URLSearchParams(location.search).get('t');
+    const statusEl = document.getElementById('status');
+
+    async function start() {
+      if (!code) {
+        // No table code: this is not a guest at a table, so go to the staff login.
+        location.replace('/staff.html');
+        return;
+      }
+      try {
+        // An unknown code gives 404, so this also checks the QR code.
+        await api('/api/orders/table/' + encodeURIComponent(code));
+      } catch (e) {
+        statusEl.textContent = 'This QR code is not valid.';
+        statusEl.className = 'error';
+        return;
+      }
+
+      // The menu is asked for with the table code, and only available dishes come back.
+      const dishes = await api('/api/menu?t=' + encodeURIComponent(code));
+      statusEl.textContent = 'To order, tell a member of our staff what you would like.';
+      drawMenu(dishes);
+      document.getElementById('chat-open').classList.remove('hidden');
+      document.getElementById('orders-section').classList.remove('hidden');
+      refreshOrders();
+      setInterval(refreshOrders, 5000);
+    }
+
+    function drawMenu(dishes) {
+      const menu = document.getElementById('menu');
+      if (dishes.length === 0) {
+        menu.append(el('p', 'The menu is empty right now.', 'muted'));
+        return;
+      }
+      let lastCategory = null;
+      for (const dish of dishes) {
+        if (dish.category !== lastCategory) {
+          menu.append(el('h2', dish.category));
+          lastCategory = dish.category;
+        }
+        const card = el('div', null, 'card');
+        const row = el('div', null, 'row');
+        row.append(el('span', dish.name, 'name'), el('span', money(dish.price)));
+        card.append(row);
+        if (dish.ingredients && dish.ingredients.length) {
+          card.append(el('div', dish.ingredients.join(', '), 'muted'));
+        }
+        if (dish.allergens && dish.allergens.length) {
+          card.append(el('div', 'Contains: ' + dish.allergens.join(', '), 'muted'));
+        }
+        menu.append(card);
+      }
+    }
+
+    async function refreshOrders() {
+      try {
+        const orders = await api('/api/orders/table/' + encodeURIComponent(code));
+        drawOrders(orders);
+      } catch (e) { /* keep the last list; try again in 5 seconds */ }
+    }
+
+    function drawOrders(orders) {
+      const box = document.getElementById('orders');
+      box.replaceChildren();
+      if (orders.length === 0) {
+        box.append(el('p', 'No orders yet.', 'muted'));
+        return;
+      }
+      let tableTotal = 0;
+      for (const order of orders) {
+        tableTotal += orderTotal(order);
+        const card = el('div', null, 'card');
+        const head = el('div', null, 'row');
+        head.append(el('span', timeText(order.createdAt), 'muted'), el('span', order.status, 'badge ' + order.status));
+        card.append(head);
+        for (const item of order.items) {
+          card.append(el('div', item.quantity + ' × ' + item.name + (item.notes ? ' (' + item.notes + ')' : '')));
+        }
+        card.append(el('div', money(orderTotal(order)), 'muted'));
+        box.append(card);
+      }
+      box.append(el('p', 'Total to pay: ' + money(tableTotal), 'name'));
+      box.append(el('p', 'To pay, please tell our staff.', 'muted'));
+    }
+
+    // Chatbot: the server answers from the menu and the orders of this table.
+    function addChat(text, mine) {
+      const log = document.getElementById('chat-log');
+      log.append(el('div', text, mine ? 'chat-line chat-me' : 'chat-line'));
+      log.scrollTop = log.scrollHeight;
+    }
+
+    async function ask() {
+      const input = document.getElementById('chat-input');
+      const text = input.value.trim();
+      if (!text) return;
+      addChat('You: ' + text, true);
+      input.value = '';
+      try {
+        // If the answer takes longer than 10 seconds, show a simple error message.
+        const slow = new Promise((resolve, reject) =>
+          setTimeout(() => reject(new Error('timeout')), 10000));
+        const answer = await Promise.race([
+          api('/api/chatbot/' + encodeURIComponent(code), 'POST', { message: text }),
+          slow
+        ]);
+        addChat(answer.reply, false);
+      } catch (e) {
+        addChat(e.message === 'timeout'
+          ? 'Sorry, the assistant is taking too long. Please try again or ask our staff.'
+          : e.message, false);
+      }
+    }
+
+    document.getElementById('chat-open').onclick = () => {
+      document.getElementById('chat-panel').classList.remove('hidden');
+      document.getElementById('chat-open').classList.add('hidden');
+      if (document.getElementById('chat-log').children.length === 0) {
+        addChat('Hello! Ask me about the dishes, ingredients, allergies, or where your order is.', false);
+      }
+      document.getElementById('chat-input').focus();
+    };
+    document.getElementById('chat-close').onclick = () => {
+      document.getElementById('chat-panel').classList.add('hidden');
+      document.getElementById('chat-open').classList.remove('hidden');
+    };
+    document.getElementById('chat-button').onclick = ask;
+    document.getElementById('chat-input').onkeydown = (event) => { if (event.key === 'Enter') ask(); };
+
+    document.getElementById('link-button').onclick = async () => {
+      const result = document.getElementById('points-result');
+      try {
+        const customer = await api('/api/orders/table/' + encodeURIComponent(code) + '/phone', 'POST',
+                                   { phoneNumber: document.getElementById('phone').value });
+        result.className = 'ok';
+        result.textContent = 'Linked ' + customer.phoneNumber + ' to this table. You have '
+          + customer.loyaltyPoints + ' points now; the points for this bill are added when staff confirm payment.';
+      } catch (e) {
+        result.className = 'error';
+        result.textContent = e.message;
+      }
+    };
+
+    document.getElementById('points-button').onclick = async () => {
+      const result = document.getElementById('points-result');
+      try {
+        const customer = await api('/api/loyalty/lookup', 'POST', { phoneNumber: document.getElementById('phone').value });
+        result.className = 'ok';
+        result.textContent = customer.tierLevel + ' · ' + customer.loyaltyPoints + ' points · ' + customer.totalOrders + ' paid orders';
+      } catch (e) {
+        result.className = 'error';
+        result.textContent = e.message;
+      }
+    };
+
+    start().catch(() => {
+      statusEl.textContent = 'Could not load the menu.';
+      statusEl.className = 'error';
+    });
+  </script>
+</body>
+</html>
