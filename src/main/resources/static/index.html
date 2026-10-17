@@ -24,8 +24,19 @@
   <div class="page">
     <h1>Menu</h1>
     <p id="status" class="muted">Loading...</p>
+    <p id="paid-banner" class="ok hidden">Payment received, thank you! Your bill below will update shortly.</p>
 
     <div id="menu"></div>
+
+    <div id="pay-section" class="hidden">
+      <h2>Pay your bill</h2>
+      <div class="card">
+        <p id="pay-total" class="name"></p>
+        <p class="muted">You'll enter your card details on Stripe's secure payment page. We never see or store your card.</p>
+        <button id="pay-button">Pay online</button>
+        <p id="pay-result" class="muted"></p>
+      </div>
+    </div>
 
     <div id="orders-section" class="hidden">
       <h2>Your orders</h2>
@@ -33,12 +44,11 @@
 
       <h2>Loyalty points</h2>
       <div class="card">
-        <p class="muted">After you order, link your phone number to this table. Staff add the points to it when you pay.</p>
+        <p class="muted">Enter your phone number to check your points, or enter it when you pay to earn points on this bill.</p>
         <label for="phone">Phone number</label>
         <input id="phone" type="tel" placeholder="5555 1234">
         <div class="actions">
-          <button id="link-button">Link my number</button>
-          <button id="points-button" class="secondary">Check my points</button>
+          <button id="points-button">Check my points</button>
         </div>
         <p id="points-result"></p>
       </div>
@@ -86,6 +96,9 @@
       drawMenu(dishes);
       document.getElementById('chat-open').classList.remove('hidden');
       document.getElementById('orders-section').classList.remove('hidden');
+      if (new URLSearchParams(location.search).get('paid') === '1') {
+        document.getElementById('paid-banner').classList.remove('hidden');
+      }
       refreshOrders();
       setInterval(refreshOrders, 5000);
     }
@@ -128,6 +141,7 @@
       box.replaceChildren();
       if (orders.length === 0) {
         box.append(el('p', 'No orders yet.', 'muted'));
+        updatePaySection(0);
         return;
       }
       let tableTotal = 0;
@@ -144,7 +158,37 @@
         box.append(card);
       }
       box.append(el('p', 'Total to pay: ' + money(tableTotal), 'name'));
-      box.append(el('p', 'To pay, please tell our staff.', 'muted'));
+      box.append(el('p', 'To pay at the counter, please tell our staff.', 'muted'));
+      updatePaySection(tableTotal);
+    }
+
+    // Shows or hides the "Pay your bill" section and keeps its total current.
+    // Kept separate from drawOrders' DOM so a payment in progress isn't wiped by the next poll.
+    function updatePaySection(tableTotal) {
+      const section = document.getElementById('pay-section');
+      if (tableTotal <= 0) {
+        section.classList.add('hidden');
+        return;
+      }
+      section.classList.remove('hidden');
+      document.getElementById('pay-total').textContent = 'Total to pay: ' + money(tableTotal);
+    }
+
+    // Starts a Stripe Checkout Session for this table's bill, then sends the guest there to
+    // pay. Stripe hosts the actual card form; this page never sees the card.
+    async function payOnline() {
+      const result = document.getElementById('pay-result');
+      result.className = 'muted';
+      result.textContent = 'Taking you to the payment page...';
+      try {
+        const phoneNumber = document.getElementById('phone').value;
+        const session = await api('/api/orders/table/' + encodeURIComponent(code) + '/pay/online',
+                                   'POST', phoneNumber ? { phoneNumber } : {});
+        location.href = session.checkoutUrl;
+      } catch (e) {
+        result.className = 'error';
+        result.textContent = e.message;
+      }
     }
 
     // Chatbot: the server answers from the menu and the orders of this table.
@@ -191,19 +235,7 @@
     document.getElementById('chat-button').onclick = ask;
     document.getElementById('chat-input').onkeydown = (event) => { if (event.key === 'Enter') ask(); };
 
-    document.getElementById('link-button').onclick = async () => {
-      const result = document.getElementById('points-result');
-      try {
-        const customer = await api('/api/orders/table/' + encodeURIComponent(code) + '/phone', 'POST',
-                                   { phoneNumber: document.getElementById('phone').value });
-        result.className = 'ok';
-        result.textContent = 'Linked ' + customer.phoneNumber + ' to this table. You have '
-          + customer.loyaltyPoints + ' points now; the points for this bill are added when staff confirm payment.';
-      } catch (e) {
-        result.className = 'error';
-        result.textContent = e.message;
-      }
-    };
+    document.getElementById('pay-button').onclick = payOnline;
 
     document.getElementById('points-button').onclick = async () => {
       const result = document.getElementById('points-result');
