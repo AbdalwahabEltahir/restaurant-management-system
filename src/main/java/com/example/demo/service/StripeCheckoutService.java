@@ -9,30 +9,25 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.stripe.Stripe;
-import com.stripe.exception.SignatureVerificationException;
-import com.stripe.model.Event;
+import com.stripe.exception.StripeException;
 import com.stripe.model.checkout.Session;
-import com.stripe.net.Webhook;
 import com.stripe.param.checkout.SessionCreateParams;
 
 /**
  * Talks to Stripe Checkout (test mode) so a guest can pay their table's bill online.
  * The order/loyalty logic itself stays in OrderService; this class only creates the
- * Checkout Session and reacts to Stripe's webhook once the guest has paid.
+ * Checkout Session and checks its status once the guest comes back from paying.
  */
 @Service
 public class StripeCheckoutService {
 
     private final OrderService orderService;
-    private final String webhookSecret;
     private final String baseUrl;
 
     public StripeCheckoutService(OrderService orderService,
                                  @Value("${stripe.secret-key}") String secretKey,
-                                 @Value("${stripe.webhook-secret}") String webhookSecret,
                                  @Value("${app.base-url}") String baseUrl) {
         this.orderService = orderService;
-        this.webhookSecret = webhookSecret;
         this.baseUrl = baseUrl;
         Stripe.apiKey = secretKey;
     }
@@ -47,7 +42,7 @@ public class StripeCheckoutService {
 
         SessionCreateParams params = SessionCreateParams.builder()
                 .setMode(SessionCreateParams.Mode.PAYMENT)
-                .setSuccessUrl(tableUrl + "&paid=1")
+                .setSuccessUrl(tableUrl + "&session_id={CHECKOUT_SESSION_ID}")
                 .setCancelUrl(tableUrl)
                 .putMetadata("paymentId", init.payment().getId())
                 .addLineItem(SessionCreateParams.LineItem.builder()
@@ -68,23 +63,14 @@ public class StripeCheckoutService {
     }
 
     /**
-     * Handles Stripe's webhook call. Verifies the payload really came from Stripe using the
-     * signing secret, then, once a checkout session has completed, marks that payment's bill
-     * as paid. Other event types are acknowledged and ignored.
+     * Called by the guest's browser once Stripe redirects it back after paying. Asks Stripe
+     * directly whether that session actually paid - never trusts the browser's say-so - and
+     * if so, finalizes the matching payment. Safe to call more than once (finalizing an
+     * already-paid payment is a no-op).
      */
-    public void handleWebhook(String payload, String signatureHeader) {
-        Event event;
-        try {
-            event = Webhook.constructEvent(payload, signatureHeader, webhookSecret);
-        } catch (SignatureVerificationException e) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid Stripe signature");
-        }
-
-        if (!"checkout.session.completed".equals(event.getType())) {
-            return;
-        }
-        Session session = (Session) event.getDataObjectDeserializer().getObject().orElse(null);
-        if (session == null) {
+    public void confirmSession(String sessionId) {
+        Session session = retrieve(sessionId);
+        if (!"paid".equals(session.getPaymentStatus())) {
             return;
         }
         Map<String, String> metadata = session.getMetadata();
@@ -102,8 +88,16 @@ public class StripeCheckoutService {
     private static Session create(SessionCreateParams params) {
         try {
             return Session.create(params);
-        } catch (com.stripe.exception.StripeException e) {
+        } catch (StripeException e) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Could not start the payment: " + e.getMessage());
+        }
+    }
+
+    private static Session retrieve(String sessionId) {
+        try {
+            return Session.retrieve(sessionId);
+        } catch (StripeException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Could not check the payment: " + e.getMessage());
         }
     }
 }

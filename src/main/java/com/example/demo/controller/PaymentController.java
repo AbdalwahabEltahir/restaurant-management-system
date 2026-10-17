@@ -5,7 +5,6 @@ import java.util.Map;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -35,11 +34,13 @@ public class PaymentController {
         return Map.of("checkoutUrl", checkoutUrl);
     }
 
-    /** Stripe calls this once a Checkout Session finishes. Not for browser or staff use. */
-    @PostMapping("/payments/webhook")
-    public void webhook(
-            @RequestHeader("Stripe-Signature") String signature,
-            @RequestBody String payload) {
-        stripeCheckoutService.handleWebhook(payload, signature);
+    /**
+     * The guest's browser calls this once Stripe sends it back after paying. Body:
+     * {"sessionId": "cs_test_..."}. The server asks Stripe directly whether that session
+     * really paid before marking anything as paid - the browser's say-so alone isn't trusted.
+     */
+    @PostMapping("/payments/confirm")
+    public void confirm(@RequestBody Map<String, String> body) {
+        stripeCheckoutService.confirmSession(body.get("sessionId"));
     }
 }

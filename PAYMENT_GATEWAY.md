@@ -5,7 +5,7 @@ what it is, how it was built, which files do what, and exactly how a payment
 travels through the system from the guest's tap to the database update.
 
 No real card network is ever contacted and no real money moves — but the
-integration pattern (hosted card form, server-side confirmation via webhook)
+integration pattern (hosted card form, server-side confirmation with Stripe)
 is the same one a production system would use.
 
 ---
@@ -28,29 +28,28 @@ is the same one a production system would use.
   Test mode is a fully separate sandbox: nothing done here ever touches real
   money or real cards.
 - **Get the secret key** — Dashboard → Developers → API keys → copy the key
-  starting `sk_test_...`. Put it in
-  `src/main/resources/application.properties` as `stripe.secret-key`.
-- **Install the Stripe CLI** — used to receive Stripe's webhook calls on
-  your local machine (`winget install --id Stripe.StripeCli -e` on Windows).
-- **Log in the CLI** — `stripe login`, which opens a browser to authorize it
-  against your Stripe account.
-- **Forward the webhook** — run and leave running:
+  starting `sk_test_...`.
+- **Put the key in `secrets.properties`**, a file at the project root (next
+  to `pom.xml`) that is **git-ignored** — it's never committed, so it's safe
+  to paste the real key directly into it:
   ```
-  stripe listen --forward-to localhost:8080/api/payments/webhook
+  stripe.secret-key=sk_test_...
   ```
-  This prints a signing secret `whsec_...` — put that in
-  `application.properties` as `stripe.webhook-secret`. (This step only
-  exists because we're on localhost; a real deployment would register a
-  webhook URL in the Stripe dashboard instead of using the CLI.)
-- **Set `app.base-url`** — the address guests use to reach the app (e.g.
-  `http://localhost:8080`, or your machine's LAN IP for testing from a
-  phone). Stripe uses this to build the redirect-back URL.
-- **Restart the Spring Boot app** after changing `application.properties` —
-  it only reads these values once, at startup.
+  `application.properties` only has a harmless placeholder; it loads
+  `secrets.properties` on top of itself via `spring.config.import` if that
+  file exists.
+- **Set `app.base-url`** (in `application.properties`, not secret) — the
+  address guests use to reach the app, e.g. `http://localhost:8080`, or your
+  machine's LAN IP if testing from a phone. Stripe uses this to build the
+  redirect-back URL.
+- **Restart the Spring Boot app** after changing either properties file —
+  they're only read once, at startup.
 - **Use a Stripe test card to pay** — `4242 4242 4242 4242`, any future
   expiry, any CVV, any ZIP. (`4000 0000 0000 0002` always declines, for
   testing the failure path.) These are Stripe's own fake numbers; a real
   card number is rejected by a test-mode Checkout page on purpose.
+
+No webhook, no Stripe CLI, and no second secret are needed — see §7 for why.
 
 ---
 
@@ -61,7 +60,7 @@ is the same one a production system would use.
   (`COUNTER` or `STRIPE`), the amount, a `status` (`PENDING` until Stripe
   confirms, then `PAID`), the Stripe session id, and Stripe's own reference
   once paid. A payment exists in the database *before* it succeeds — that's
-  what makes the "wait for the provider to confirm" model possible.
+  what makes "wait for the provider to confirm" possible.
 - **`repository/PaymentRepository.java`** — plain Mongo repository for
   `Payment` (save/find by id).
 - **`service/OrderService.java`** — owns all the business rules: what counts
@@ -70,23 +69,28 @@ is the same one a production system would use.
   knows nothing about Stripe specifically — it just exposes three entry
   points (see §5) that any payment method can call into.
 - **`service/StripeCheckoutService.java`** — the *only* class that imports
-  the Stripe SDK. It creates Stripe Checkout Sessions and validates/handles
-  Stripe's webhook callback. It delegates all order/loyalty logic back to
-  `OrderService` — this class only knows about Stripe's API shapes.
-- **`controller/PaymentController.java`** — the two HTTP endpoints Stripe
-  and the guest's browser actually hit (see §4).
+  the Stripe SDK. It creates Stripe Checkout Sessions, and checks a
+  session's real status with Stripe when the guest comes back. It delegates
+  all order/loyalty logic back to `OrderService` — this class only knows
+  about Stripe's API shapes.
+- **`controller/PaymentController.java`** — the two HTTP endpoints involved
+  (see §4).
 - **`controller/OrderController.java`** — unchanged except the old
-  guest "instant pay" endpoint was removed from here (it now lives in
-  `PaymentController`), and the staff pay endpoint no longer needs a
-  `method` field.
+  guest "instant pay" endpoint was removed from here (replaced by
+  `PaymentController`'s checkout endpoint), and the staff pay endpoint no
+  longer needs a `method` field.
 - **`static/index.html`** — the guest-facing QR-code page. Its "Pay your
   bill" section calls the checkout endpoint and redirects the browser to
-  Stripe; it has no card form of its own.
+  Stripe; it has no card form of its own, and confirms the payment when
+  Stripe sends the guest back.
 - **`static/staff.html`** — the staff dashboard. Its "Ready to pay" cards no
   longer have a payment-method dropdown, since staff only ever do `COUNTER`.
 - **`pom.xml`** — added the `com.stripe:stripe-java` dependency (the SDK).
-- **`application.properties`** — holds the three pieces of Stripe config:
-  `stripe.secret-key`, `stripe.webhook-secret`, `app.base-url`.
+- **`application.properties`** — holds `app.base-url` and a placeholder
+  `stripe.secret-key`, plus the `spring.config.import` line that loads
+  `secrets.properties` if present.
+- **`secrets.properties`** (git-ignored, project root) — the one place the
+  real `stripe.secret-key` lives.
 
 ---
 
@@ -99,13 +103,13 @@ is the same one a production system would use.
     Stripe Checkout Session for the total, returns `{ "checkoutUrl": "..." }`.
   - The browser then does `location.href = checkoutUrl` — a real page
     navigation to Stripe's own servers.
-- **`POST /api/payments/webhook`**
-  - Called by: Stripe's servers, never the browser or staff.
-  - Body: a signed JSON event describing what happened to a Checkout
-    Session.
-  - Does: verifies the signature really came from Stripe (using
-    `stripe.webhook-secret`), and if the event is `checkout.session.completed`,
-    finds the matching `Payment` and finalizes it.
+- **`POST /api/payments/confirm`**
+  - Called by: the guest's browser, right after Stripe redirects it back.
+  - Body: `{ "sessionId": "cs_test_..." }` (the Checkout Session id Stripe
+    put in the redirect URL).
+  - Does: asks Stripe directly (`Session.retrieve`) whether that session's
+    `payment_status` is really `"paid"` — the browser's claim alone is never
+    trusted — and if so, finalizes the matching `Payment`.
 
 ---
 
@@ -119,10 +123,11 @@ is the same one a production system would use.
   `Payment` with `Method.STRIPE` and `Status.PENDING` — nothing is marked
   paid yet. Returns the payment plus the table number, for building the
   Stripe session.
-- **`finalizeOnlinePayment(paymentId, providerRef)`** — called only by the
-  webhook handler, once Stripe confirms money was received. Loads the
-  pending `Payment`, marks its orders `PAID`, frees the table, adds loyalty
-  points, and marks the `Payment` itself `PAID`.
+- **`finalizeOnlinePayment(paymentId, providerRef)`** — called once Stripe
+  confirms money was received. Loads the pending `Payment`, marks its orders
+  `PAID`, frees the table, adds loyalty points, and marks the `Payment`
+  itself `PAID`. Safe to call more than once for the same payment — a
+  payment that's already `PAID` is left alone.
 - All three ultimately call the same two private helpers, `loadBill` (the
   validation rules) and `settle` (mark orders paid / add points / free
   table / save the payment) — so "what counts as paid" is defined in exactly
@@ -142,33 +147,26 @@ is the same one a production system would use.
    - calls `OrderService.beginOnlineCheckout` → validates the bill, saves a
      `Payment` document with `status=PENDING` in MongoDB.
    - builds a Stripe `SessionCreateParams` (one line item, the bill total,
-     success/cancel URLs pointing back at the table's page, and the
-     `Payment`'s id stashed in the session's metadata).
-   - calls `Session.create(params)` — this is the actual network call to
-     Stripe's API.
+     a success URL containing the placeholder `{CHECKOUT_SESSION_ID}`, a
+     cancel URL, and the `Payment`'s id stashed in the session's metadata).
+   - calls `Session.create(params)` — the actual network call to Stripe's API.
    - saves the returned session id onto the `Payment` (`attachStripeSession`).
    - returns the session's checkout URL to the browser.
 5. Browser does `location.href = checkoutUrl` — guest is now on a page
    hosted entirely by Stripe. They type their (test) card there. This app's
    server and database see nothing of the card itself.
-6. Guest finishes paying on Stripe's page. Two things happen, in parallel,
-   both initiated by Stripe:
-   - **Browser redirect**: Stripe sends the guest's browser back to
-     `.../?t={qrCodeHash}&paid=1`. `index.html` sees `paid=1` and shows a
-     "Payment received, thank you" banner — but the order list hasn't
-     changed yet, because this redirect doesn't carry proof of payment by
-     itself.
-   - **Server webhook**: Stripe's backend calls this app's backend directly:
-     `POST /api/payments/webhook`, with a signed `checkout.session.completed`
-     event. This is the actual proof of payment — it comes from Stripe's
-     servers, not from anything the guest's browser could fake.
-7. `PaymentController.webhook` → `StripeCheckoutService.handleWebhook`:
-   - verifies the request's signature against `stripe.webhook-secret`
-     (rejects it if it doesn't match — stops anyone from forging a fake
-     "payment completed" call).
-   - reads the `paymentId` back out of the session's metadata.
-   - calls `OrderService.finalizeOnlinePayment(paymentId, providerRef)`.
-8. `OrderService.finalizeOnlinePayment`:
+6. Guest finishes paying. Stripe redirects the browser back to
+   `.../?t={qrCodeHash}&session_id={the real session id}`.
+7. `index.html` sees `session_id` in the URL and calls
+   `POST /api/payments/confirm` with it.
+8. `PaymentController.confirm` → `StripeCheckoutService.confirmSession`:
+   - calls `Session.retrieve(sessionId)` — asks Stripe's API directly for
+     that session's current state (this is the real confirmation; nothing
+     the browser says is trusted on its own).
+   - if `payment_status` isn't `"paid"`, it stops here and does nothing.
+   - otherwise reads the `paymentId` back out of the session's metadata and
+     calls `OrderService.finalizeOnlinePayment(paymentId, providerRef)`.
+9. `OrderService.finalizeOnlinePayment`:
    - loads the `Payment` (still `PENDING`), the table, the orders, and the
      customer (if any).
    - marks every order in that bill `Order.Status.PAID`.
@@ -176,25 +174,31 @@ is the same one a production system would use.
      document and logs a `loyalty_transactions` entry.
    - frees the table (`RestaurantTable.Status.AVAILABLE`).
    - updates the `Payment` to `status=PAID` with Stripe's reference.
-9. Guest's page is polling `GET /api/orders/table/{qrCodeHash}` every 5
-   seconds (this was already happening, unrelated to payment). On its next
-   poll, the orders come back `PAID`, the bill shows as settled, and the
-   "Pay your bill" section hides itself.
+10. `index.html` shows the "Payment received" banner, and its existing
+    5-second poll of `GET /api/orders/table/{qrCodeHash}` picks up the
+    now-`PAID` orders shortly after, hiding the "Pay your bill" section.
 
 ---
 
-## 7. Why two separate signals (redirect *and* webhook)?
+## 7. Why confirm on return instead of a webhook?
 
-- The **redirect** tells the browser "the guest is done," so the page can
-  show a friendly message — but a browser redirect can be faked, delayed,
-  or never arrive (closed tab, lost connection) and proves nothing about
-  whether money actually moved.
-- The **webhook** is the one source of truth: it's a direct, signed,
-  server-to-server call from Stripe, so it's what actually moves orders to
-  `PAID` and awards loyalty points. This is exactly why the implementation
-  needs both the CLI-forwarded webhook locally and a registered webhook URL
-  in production — without it, payments would stay `PENDING` forever no
-  matter what the browser shows.
+A production payment integration normally uses a **webhook**: Stripe's
+servers call your server directly and tell it a payment succeeded,
+independent of whether the guest's browser ever makes it back to your page.
+That's more robust (it still works if the guest closes the tab after
+paying), but it needs a second secret (the webhook signing secret) and,
+for local development, a tool like the Stripe CLI running in the background
+to forward Stripe's calls to `localhost`.
+
+This project instead confirms the payment **when the browser returns**:
+Stripe redirects the guest back with their Checkout Session id, and the
+server calls Stripe's API (`Session.retrieve`) to check that session's real
+status before trusting it. This needs only the one secret key you already
+have, and no extra running process — simpler to set up for a demo, at the
+cost of not handling the case where the guest closes the browser tab
+between paying and being redirected back (the payment would stay `PENDING`
+in that rare case). A production deployment would want to add the webhook
+back for that reason.
 
 ---
 
@@ -204,5 +208,5 @@ is the same one a production system would use.
 - `POST /api/staff/orders/table/{qrCodeHash}/pay` (requires staff login).
 - `OrderController.pay` → `OrderService.completePayment(qrCodeHash, phoneNumber)`.
 - Same `loadBill`/`settle` helpers as the online path, just triggered
-  synchronously by staff instead of asynchronously by a webhook — so the
+  synchronously by staff instead of by the guest's return trip — so the
   receipt comes back immediately in the same HTTP response.

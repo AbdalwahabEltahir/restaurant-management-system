@@ -96,8 +96,15 @@
       drawMenu(dishes);
       document.getElementById('chat-open').classList.remove('hidden');
       document.getElementById('orders-section').classList.remove('hidden');
-      if (new URLSearchParams(location.search).get('paid') === '1') {
-        document.getElementById('paid-banner').classList.remove('hidden');
+
+      // Stripe sends the guest back here with their Checkout Session id. Ask the server to
+      // confirm it really paid (it checks with Stripe directly) before showing it as paid.
+      const sessionId = new URLSearchParams(location.search).get('session_id');
+      if (sessionId) {
+        try {
+          await api('/api/payments/confirm', 'POST', { sessionId });
+          document.getElementById('paid-banner').classList.remove('hidden');
+        } catch (e) { /* the 5-second poll below will still catch up once paid */ }
       }
       refreshOrders();
       setInterval(refreshOrders, 5000);
