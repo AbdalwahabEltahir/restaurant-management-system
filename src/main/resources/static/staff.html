@@ -51,7 +51,6 @@
     let auth = null;          // the Basic token, kept for this browser tab only
     let timer = null;         // refresh timer of the Orders tab
     const phones = {};        // table code -> phone number typed for payment
-    const methods = {};       // table code -> payment method chosen
 
     const panel = document.getElementById('panel');
     const message = document.getElementById('message');
@@ -219,17 +218,6 @@
       head.append(el('span', 'Table ' + table.tableNumber, 'name'), el('strong', money(total)));
       card.append(head);
 
-      card.append(el('label', 'Payment method'));
-      const method = el('select');
-      for (const [value, text] of [['COUNTER', 'Pay at the counter'], ['ONLINE_TEST', 'Online payment (test mode)']]) {
-        const option = el('option', text);
-        option.value = value;
-        method.append(option);
-      }
-      method.value = methods[table.qrCodeHash] || 'COUNTER';
-      method.onchange = () => { methods[table.qrCodeHash] = method.value; };
-      card.append(method);
-
       card.append(el('label', 'Customer phone number (optional, for loyalty points)'));
       const phone = el('input');
       phone.type = 'tel';
@@ -247,13 +235,12 @@
 
     async function pay(table) {
       const phone = (phones[table.qrCodeHash] || '').trim();
-      const body = { method: methods[table.qrCodeHash] || 'COUNTER' };
+      const body = {};
       if (phone) body.phoneNumber = phone;
       try {
         const receipt = await api('/api/staff/orders/table/' + encodeURIComponent(table.qrCodeHash) + '/pay',
                                   'POST', body, auth);
         delete phones[table.qrCodeHash];
-        delete methods[table.qrCodeHash];
         say('Table ' + table.tableNumber + ' is paid.');
         showReceipt(receipt);
         refreshOrders();
@@ -273,8 +260,7 @@
       totalLine.append(el('strong', 'Total'), el('strong', money(receipt.total)));
       card.append(totalLine);
 
-      const how = receipt.method === 'ONLINE_TEST' ? 'Online payment (test mode)' : 'Paid at the counter';
-      card.append(el('div', how + (receipt.providerRef ? ' · ' + receipt.providerRef : ''), 'muted'));
+      card.append(el('div', 'Paid at the counter', 'muted'));
       card.append(el('div', new Date(receipt.paidAt).toLocaleString(), 'muted'));
       if (receipt.customerPhone) card.append(el('div', 'Loyalty number: ' + receipt.customerPhone, 'muted'));
 

@@ -5,11 +5,8 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
-import java.util.Set;
-import java.util.UUID;
 
 import org.bson.Document;
-import org.bson.types.Decimal128;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -19,10 +16,12 @@ import org.springframework.web.server.ResponseStatusException;
 import com.example.demo.model.Customer;
 import com.example.demo.model.MenuItem;
 import com.example.demo.model.Order;
+import com.example.demo.model.Payment;
 import com.example.demo.model.RestaurantTable;
 import com.example.demo.repository.CustomerRepository;
 import com.example.demo.repository.MenuItemRepository;
 import com.example.demo.repository.OrderRepository;
+import com.example.demo.repository.PaymentRepository;
 import com.example.demo.repository.RestaurantTableRepository;
 
 @Service
@@ -33,24 +32,24 @@ public class OrderService {
             Order.Status.PENDING, Order.Status.PREPARING,
             Order.Status.READY, Order.Status.SERVED);
 
-    /** COUNTER: the guest pays staff at the counter. ONLINE_TEST: simulated online payment. */
-    private static final Set<String> PAYMENT_METHODS = Set.of("COUNTER", "ONLINE_TEST");
-
     private final OrderRepository orders;
     private final RestaurantTableRepository tables;
     private final MenuItemRepository menuItems;
     private final CustomerRepository customers;
     private final CustomerService customerService;
+    private final PaymentRepository payments;
     private final MongoTemplate mongo;
 
     public OrderService(OrderRepository orders, RestaurantTableRepository tables,
                         MenuItemRepository menuItems, CustomerRepository customers,
-                        CustomerService customerService, MongoTemplate mongo) {
+                        CustomerService customerService, PaymentRepository payments,
+                        MongoTemplate mongo) {
         this.orders = orders;
         this.tables = tables;
         this.menuItems = menuItems;
         this.customers = customers;
         this.customerService = customerService;
+        this.payments = payments;
         this.mongo = mongo;
     }
 
@@ -74,7 +73,7 @@ public class OrderService {
     public static class Receipt {
         private final int tableNumber;
         private final String method;
-        private final String providerRef;      // only for ONLINE_TEST, otherwise null
+        private final String providerRef;      // Stripe's payment reference; null for a counter payment
         private final Instant paidAt;
         private final List<Order.Item> items;
         private final BigDecimal total;
@@ -197,22 +196,19 @@ public class OrderService {
         return customer;
     }
 
-    /**
-     * Final step of checkout (FR-3.1, FR-3.2). Staff confirm payment for the whole table:
-     * method COUNTER (default) or ONLINE_TEST (simulated). Every open order at the table
-     * becomes Paid and the table is freed. The loyalty points go to the phone number given
-     * here, or else to the number the guest linked to the table. A record is saved in the
-     * "payments" collection.
-     * Returns the receipt.
-     */
-    @Transactional
-    public Receipt completePayment(String qrCodeHash, String phoneNumber, String method) {
-        String paymentMethod = (method == null || method.isBlank())
-                ? "COUNTER" : method.trim().toUpperCase();
-        if (!PAYMENT_METHODS.contains(paymentMethod)) {
-            throw bad("Payment method must be COUNTER or ONLINE_TEST");
+    /** A table's unpaid bill: the table itself, its served orders, and who to credit points to. */
+    private record Bill(RestaurantTable table, List<Order> openOrders, Customer customer) {
+        BigDecimal total() {
+            return openOrders.stream().map(Order::subtotal).reduce(BigDecimal.ZERO, BigDecimal::add);
         }
+    }
 
+    /**
+     * Loads and validates a table's bill: the table must exist, have open orders, and every
+     * open order must be Served. The phone number given wins for loyalty points; otherwise the
+     * number already linked to the table's orders is used, if any.
+     */
+    private Bill loadBill(String qrCodeHash, String phoneNumber) {
         RestaurantTable table = findTable(qrCodeHash);
         List<Order> open = orders.findByTableIdAndStatusIn(table.getId(), OPEN);
         if (open.isEmpty()) {
@@ -223,7 +219,6 @@ public class OrderService {
             throw bad("Some orders are not served yet");
         }
 
-        // Who gets the points: a number typed now wins, otherwise the number linked to the table.
         Customer customer = null;
         if (phoneNumber != null && !phoneNumber.isBlank()) {
             customer = customerService.findOrCreateByPhone(phoneNumber);
@@ -233,17 +228,79 @@ public class OrderService {
                 customer = customers.findById(linkedId).orElse(null);
             }
         }
+        return new Bill(table, open, customer);
+    }
+
+    /**
+     * Staff confirm a table paid at the counter (FR-3.1, FR-3.2). Every open order at the
+     * table becomes Paid and the table is freed. Online payment is done by the guest, through
+     * beginOnlineCheckout and finalizeOnlinePayment instead. Returns the receipt.
+     */
+    @Transactional
+    public Receipt completePayment(String qrCodeHash, String phoneNumber) {
+        Bill bill = loadBill(qrCodeHash, phoneNumber);
+        Payment payment = new Payment(bill.table().getId(), idOf(bill.customer()), orderIdsOf(bill.openOrders()),
+                Payment.Method.COUNTER, bill.total(), Payment.Status.PAID);
+        return settle(bill, payment);
+    }
+
+    /** What StripeCheckoutService needs to build the Checkout Session for a new online payment. */
+    public record CheckoutInit(Payment payment, int tableNumber) {
+    }
+
+    /**
+     * Guest starts paying online (FR-3.1). Validates the bill and records a Payment that is
+     * PENDING until Stripe confirms it.
+     */
+    @Transactional
+    public CheckoutInit beginOnlineCheckout(String qrCodeHash, String phoneNumber) {
+        Bill bill = loadBill(qrCodeHash, phoneNumber);
+        Payment payment = new Payment(bill.table().getId(), idOf(bill.customer()), orderIdsOf(bill.openOrders()),
+                Payment.Method.STRIPE, bill.total(), Payment.Status.PENDING);
+        return new CheckoutInit(payments.save(payment), bill.table().getTableNumber());
+    }
+
+    /** Called once the Checkout Session for a pending payment is created, to keep its id. */
+    public void attachStripeSession(String paymentId, String stripeSessionId) {
+        Payment payment = payments.findById(paymentId)
+                .orElseThrow(() -> bad("Unknown payment"));
+        payment.setStripeSessionId(stripeSessionId);
+        payments.save(payment);
+    }
+
+    /**
+     * Stripe confirmed the payment (FR-3.2), through the checkout.session.completed webhook.
+     * Marks the bill's orders Paid, frees the table, and adds loyalty points, the same as a
+     * counter payment. Returns the receipt. Does nothing if the payment was already finalized,
+     * since Stripe may send the same webhook more than once.
+     */
+    @Transactional
+    public Receipt finalizeOnlinePayment(String paymentId, String providerRef) {
+        Payment payment = payments.findById(paymentId)
+                .orElseThrow(() -> bad("Unknown payment"));
+        if (payment.getStatus() == Payment.Status.PAID) {
+            return null;
+        }
+        RestaurantTable table = tables.findById(payment.getTableId())
+                .orElseThrow(() -> bad("Unknown table"));
+        List<Order> open = orders.findAllById(payment.getOrderIds());
+        Customer customer = (payment.getCustomerId() == null)
+                ? null : customers.findById(payment.getCustomerId()).orElse(null);
+
+        payment.setStatus(Payment.Status.PAID);
+        payment.setProviderRef(providerRef);
+        return settle(new Bill(table, open, customer), payment);
+    }
+
+    /** Marks a bill's orders Paid, frees the table, adds loyalty points, and saves the payment. */
+    private Receipt settle(Bill bill, Payment payment) {
+        RestaurantTable table = bill.table();
+        Customer customer = bill.customer();
         long pointsBefore = (customer == null) ? 0 : customer.getLoyaltyPoints();
 
-        BigDecimal total = BigDecimal.ZERO;
         List<Order.Item> items = new ArrayList<>();
-        List<String> orderIds = new ArrayList<>();
-
-        for (Order order : open) {
-            total = total.add(order.subtotal());
+        for (Order order : bill.openOrders()) {
             items.addAll(order.getItems());
-            orderIds.add(order.getId());
-
             order.setStatus(Order.Status.PAID);
             if (customer != null) {
                 order.setCustomerId(customer.getId());
@@ -266,19 +323,7 @@ public class OrderService {
 
         table.setStatus(RestaurantTable.Status.AVAILABLE);
         tables.save(table);
-
-        // Save the payment in the "payments" collection.
-        String providerRef = "ONLINE_TEST".equals(paymentMethod)
-                ? "TEST-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase()
-                : null;
-        Document payment = new Document()
-                .append("orderIds", orderIds)
-                .append("method", paymentMethod)
-                .append("amount", new Decimal128(total))
-                .append("providerRef", providerRef)
-                .append("status", "PAID")
-                .append("createdAt", new Date());
-        mongo.insert(payment, "payments");
+        payments.save(payment);
 
         // Read the customer again to report the points that were just added.
         long pointsEarned = 0;
@@ -291,15 +336,23 @@ public class OrderService {
             tier = String.valueOf(updated.getTierLevel());
         }
 
-        return new Receipt(table.getTableNumber(), paymentMethod, providerRef, Instant.now(),
-                items, total, orderIds, customer == null ? null : customer.getPhoneNumber(),
-                pointsEarned, pointsBalance, tier);
+        return new Receipt(table.getTableNumber(), payment.getMethod().name(), payment.getProviderRef(),
+                Instant.now(), items, payment.getAmount(), payment.getOrderIds(),
+                customer == null ? null : customer.getPhoneNumber(), pointsEarned, pointsBalance, tier);
     }
 
     /** The loyalty points a customer has right now. */
     private long pointsOf(String customerId) {
         Customer c = customers.findById(customerId).orElse(null);
         return (c == null) ? 0 : c.getLoyaltyPoints();
+    }
+
+    private static String idOf(Customer customer) {
+        return (customer == null) ? null : customer.getId();
+    }
+
+    private static List<String> orderIdsOf(List<Order> open) {
+        return open.stream().map(Order::getId).toList();
     }
 
     /** The customer linked to a table's open orders, or null if no number is linked yet. */

@@ -39,6 +39,8 @@ public class OrderController {
         return orderService.openOrdersForTable(qrCodeHash);
     }
 
+    // Paying online is handled by PaymentController, which talks to Stripe Checkout.
+
     // ---------- Staff (login required, section "orders") ----------
 
     /** Staff order food for a table. Body: [{"menuItemId": "...", "quantity": 2, "notes": "no onion"}] */
@@ -78,9 +80,8 @@ public class OrderController {
     }
 
     /**
-     * Staff confirm that the table's bill is paid and get the receipt.
-     * Body is optional: {"method": "COUNTER" or "ONLINE_TEST", "phoneNumber": "5555 1234"}.
-     * The method defaults to COUNTER. A phone number adds loyalty points for that customer.
+     * Staff confirm that the table paid at the counter and get the receipt.
+     * Body is optional: {"phoneNumber": "5555 1234"}, which adds loyalty points for that customer.
      */
     @PostMapping("/staff/orders/table/{qrCodeHash}/pay")
     public OrderService.Receipt pay(
@@ -89,7 +90,6 @@ public class OrderController {
             @RequestBody(required = false) Map<String, String> body) {
         userService.authorize(auth, "orders");
         String phone = (body == null) ? null : body.get("phoneNumber");
-        String method = (body == null) ? null : body.get("method");
-        return orderService.completePayment(qrCodeHash, phone, method);
+        return orderService.completePayment(qrCodeHash, phone);
     }
 }
