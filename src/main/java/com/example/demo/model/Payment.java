@@ -36,7 +36,7 @@ public class Payment {
     private BigDecimal amount;
     private Status status;
 
-    /** True if the 15% loyalty discount was redeemed for this bill. */
+    /** True if a loyalty discount tier was redeemed for this bill. */
     private boolean discountApplied;
 
     /** Set once the Stripe Checkout session for this payment is created. STRIPE payments only. */

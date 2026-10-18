@@ -5,34 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Restaurant Menu</title>
   <link rel="stylesheet" href="/style.css">
-  <style>
-    /* The chatbot floats at the bottom of the screen, so the guest always sees it. */
-    #chat-open { position: fixed; right: 16px; bottom: 16px; z-index: 20; border-radius: 24px;
-                 box-shadow: 0 2px 8px rgba(0,0,0,.25); }
-    #chat-panel { position: fixed; right: 16px; bottom: 70px; z-index: 20;
-                  width: min(360px, calc(100vw - 32px)); background: #fff;
-                  border: 1px solid var(--line); border-radius: 12px; padding: 12px;
-                  box-shadow: 0 4px 16px rgba(0,0,0,.25); }
-    #chat-log { max-height: 40vh; overflow-y: auto; margin-bottom: 8px; }
-    .chat-line { white-space: pre-line; margin-bottom: 8px; }
-    .chat-me { font-weight: 600; }
-    .chat-send { display: flex; gap: 8px; }
-    .chat-send input { margin: 0; }
-  </style>
 </head>
-<body>
+<body class="guest-page">
   <div class="page">
-    <h1>Menu</h1>
+    <h1 class="brand-title">Menu</h1>
     <p id="status" class="muted">Loading...</p>
     <p id="paid-banner" class="ok hidden">Payment received, thank you! Your bill below will update shortly.</p>
 
     <div id="menu"></div>
 
+    <div id="order-bar" class="cart-bar hidden">
+      <div class="row">
+        <div><span id="order-count">0 items</span> · <strong id="order-total">0.00</strong></div>
+        <button id="order-send">Send order to kitchen</button>
+      </div>
+      <p id="order-result" class="muted"></p>
+    </div>
+
     <div id="pay-section" class="hidden">
       <h2>Pay your bill</h2>
       <div class="card">
         <p id="pay-total" class="name"></p>
-        <label class="checkbox-row"><input id="redeem-discount" type="checkbox"> Redeem 500 points for 15% off (enter your phone number in Loyalty points below first)</label>
+        <label class="checkbox-row"><input id="redeem-discount" type="checkbox"> Redeem loyalty points for a discount (enter your phone number in Loyalty points below first)</label>
         <p class="muted">You'll enter your card details on Stripe's secure payment page. We never see or store your card.</p>
         <button id="pay-button">Pay online</button>
         <p id="pay-result" class="muted"></p>
@@ -93,7 +87,7 @@
 
       // The menu is asked for with the table code, and only available dishes come back.
       const dishes = await api('/api/menu?t=' + encodeURIComponent(code));
-      statusEl.textContent = 'To order, tell a member of our staff what you would like.';
+      statusEl.textContent = 'Pick what you\'d like below, then send it to the kitchen.';
       drawMenu(dishes);
       document.getElementById('chat-open').classList.remove('hidden');
       document.getElementById('orders-section').classList.remove('hidden');
@@ -111,29 +105,118 @@
       setInterval(refreshOrders, 5000);
     }
 
+    // What the guest has picked so far: dish id -> { dish, quantity, qtyText, qtyBadge, noteInput }
+    const cart = {};
+
     function drawMenu(dishes) {
       const menu = document.getElementById('menu');
+      menu.replaceChildren();
       if (dishes.length === 0) {
-        menu.append(el('p', 'The menu is empty right now.', 'muted'));
+        menu.append(emptyState('fa-utensils', 'The menu is empty right now.'));
         return;
       }
       let lastCategory = null;
+      let grid = null;
       for (const dish of dishes) {
         if (dish.category !== lastCategory) {
           menu.append(el('h2', dish.category));
+          grid = el('div', null, 'dish-grid guest-dish-grid');
+          menu.append(grid);
           lastCategory = dish.category;
         }
-        const card = el('div', null, 'card');
-        const row = el('div', null, 'row');
-        row.append(el('span', dish.name, 'name'), el('span', money(dish.price)));
-        card.append(row);
-        if (dish.ingredients && dish.ingredients.length) {
-          card.append(el('div', dish.ingredients.join(', '), 'muted'));
+        grid.append(guestDishCard(dish));
+      }
+    }
+
+    // One dish tile with a photo, +/- controls and an optional note. Mirrors the staff
+    // "New order" dish card, so the guest and staff ordering views match visually.
+    function guestDishCard(dish) {
+      const card = el('div', null, 'dish-card');
+      const imageWrap = dishImage(dish.name);
+      const qtyBadge = el('span', '0', 'qty-badge hidden');
+      imageWrap.append(qtyBadge);
+      card.append(imageWrap);
+
+      const body = el('div', null, 'dish-card-body');
+      body.append(el('div', dish.name, 'name'));
+      body.append(el('div', money(dish.price), 'dish-price'));
+      if (dish.ingredients && dish.ingredients.length) {
+        body.append(el('div', dish.ingredients.join(', '), 'muted'));
+      }
+      if (dish.allergens && dish.allergens.length) {
+        body.append(el('div', 'Contains: ' + dish.allergens.join(', '), 'muted'));
+      }
+
+      const qty = el('div', null, 'qty');
+      const minus = el('button', '-', 'secondary');
+      const qtyText = el('span', '0');
+      const plus = el('button', '+', 'secondary');
+      qty.append(minus, qtyText, plus);
+      body.append(qty);
+
+      const noteInput = el('input', null, 'note hidden');
+      noteInput.placeholder = 'Note for the kitchen (optional)';
+      body.append(noteInput);
+      card.append(body);
+
+      cart[dish.id] = { dish: dish, quantity: 0, qtyText: qtyText, qtyBadge: qtyBadge, noteInput: noteInput };
+      const change = (step) => {
+        const line = cart[dish.id];
+        line.quantity = Math.max(0, line.quantity + step);
+        qtyText.textContent = line.quantity;
+        qtyBadge.textContent = line.quantity;
+        qtyBadge.classList.toggle('hidden', line.quantity === 0);
+        card.classList.toggle('in-cart', line.quantity > 0);
+        noteInput.classList.toggle('hidden', line.quantity === 0);
+        updateOrderBar();
+      };
+      minus.onclick = () => change(-1);
+      plus.onclick = () => change(1);
+      return card;
+    }
+
+    function updateOrderBar() {
+      let n = 0, sum = 0;
+      for (const line of Object.values(cart)) {
+        n += line.quantity;
+        sum += line.quantity * Number(line.dish.price);
+      }
+      document.getElementById('order-count').textContent = n + (n === 1 ? ' item' : ' items');
+      document.getElementById('order-total').textContent = money(sum);
+      document.getElementById('order-bar').classList.toggle('hidden', n === 0);
+      document.getElementById('order-send').disabled = n === 0;
+    }
+
+    async function sendOrder() {
+      const lines = Object.values(cart)
+        .filter(line => line.quantity > 0)
+        .map(line => ({
+          menuItemId: line.dish.id,
+          quantity: line.quantity,
+          notes: line.noteInput.value.trim() || null
+        }));
+      const result = document.getElementById('order-result');
+      const send = document.getElementById('order-send');
+      send.disabled = true;
+      try {
+        await api('/api/orders/table/' + encodeURIComponent(code), 'POST', lines);
+        result.className = 'ok';
+        result.textContent = 'Sent to the kitchen!';
+        for (const line of Object.values(cart)) {
+          line.quantity = 0;
+          line.qtyText.textContent = '0';
+          line.qtyBadge.textContent = '0';
+          line.qtyBadge.classList.add('hidden');
+          line.noteInput.value = '';
+          line.noteInput.classList.add('hidden');
         }
-        if (dish.allergens && dish.allergens.length) {
-          card.append(el('div', 'Contains: ' + dish.allergens.join(', '), 'muted'));
-        }
-        menu.append(card);
+        document.querySelectorAll('#menu .dish-card.in-cart').forEach(c => c.classList.remove('in-cart'));
+        updateOrderBar();
+        refreshOrders();
+      } catch (e) {
+        result.className = 'error';
+        result.textContent = e.message;
+        send.disabled = false;
       }
     }
 
@@ -148,7 +231,7 @@
       const box = document.getElementById('orders');
       box.replaceChildren();
       if (orders.length === 0) {
-        box.append(el('p', 'No orders yet.', 'muted'));
+        box.append(emptyState('fa-receipt', 'No orders yet.'));
         updatePaySection(0);
         return;
       }
@@ -184,12 +267,29 @@
       drawPayTotal();
     }
 
-    // Shows the 15% discounted estimate once the guest ticks the redeem checkbox.
+    // What "Check my points" last found for the phone number currently typed. Cleared
+    // whenever the phone number changes, so a stale balance never previews a discount
+    // for the wrong customer. The server always recalculates the real amount at payment.
+    let knownLoyaltyPoints = null;
+
+    // Shows the discounted estimate once the guest ticks the redeem checkbox, using
+    // whichever tier their last-checked points balance reaches.
     function drawPayTotal() {
       const redeemDiscount = document.getElementById('redeem-discount').checked;
-      const total = redeemDiscount ? lastTableTotal * 0.85 : lastTableTotal;
-      document.getElementById('pay-total').textContent = 'Total to pay: ' + money(total) +
-          (redeemDiscount ? ' (15% loyalty discount applied)' : '');
+      let total = lastTableTotal;
+      let note = '';
+      if (redeemDiscount) {
+        const tier = knownLoyaltyPoints == null ? null : loyaltyDiscountForPoints(knownLoyaltyPoints);
+        if (tier) {
+          total = lastTableTotal * (1 - tier.rate);
+          note = ' (' + Math.round(tier.rate * 100) + '% loyalty discount applied)';
+        } else if (knownLoyaltyPoints == null) {
+          note = ' (check your points above to preview the discount)';
+        } else {
+          note = ' (not enough points yet for a discount)';
+        }
+      }
+      document.getElementById('pay-total').textContent = 'Total to pay: ' + money(total) + note;
     }
 
     // Starts a Stripe Checkout Session for this table's bill, then sends the guest there to
@@ -257,6 +357,7 @@
     document.getElementById('chat-button').onclick = ask;
     document.getElementById('chat-input').onkeydown = (event) => { if (event.key === 'Enter') ask(); };
 
+    document.getElementById('order-send').onclick = sendOrder;
     document.getElementById('pay-button').onclick = payOnline;
     document.getElementById('redeem-discount').onchange = drawPayTotal;
 
@@ -266,11 +367,17 @@
         const customer = await api('/api/loyalty/lookup', 'POST', { phoneNumber: document.getElementById('phone').value });
         result.className = 'ok';
         result.textContent = customer.tierLevel + ' · ' + customer.loyaltyPoints + ' points · ' + customer.totalOrders + ' paid orders';
+        knownLoyaltyPoints = customer.loyaltyPoints;
+        drawPayTotal();
       } catch (e) {
         result.className = 'error';
         result.textContent = e.message;
       }
     };
+
+    // A different phone number means a different points balance, so drop the cached
+    // one rather than preview a discount that belongs to whoever was typed before.
+    document.getElementById('phone').oninput = () => { knownLoyaltyPoints = null; drawPayTotal(); };
 
     start().catch(() => {
       statusEl.textContent = 'Could not load the menu.';

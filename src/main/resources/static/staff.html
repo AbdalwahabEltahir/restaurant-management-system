@@ -8,10 +8,11 @@
   <!-- Draws the QR images. Needs internet. -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 </head>
-<body>
+<body class="staff-page">
   <!-- Login -->
   <div id="login-box" class="card narrow">
     <h1>Staff login</h1>
+    <p class="muted login-sub">Sign in to open the kitchen, orders and admin dashboard.</p>
     <label for="username">Username</label>
     <input id="username" autocomplete="username">
     <label for="password">Password</label>
@@ -49,6 +50,7 @@
     };
 
     let auth = null;          // the Basic token, kept for this browser tab only
+    let currentUserId = null; // the logged-in account's id, so it can't deactivate itself
     let timer = null;         // refresh timer of the Orders tab
     const phones = {};        // table code -> phone number typed for payment
 
@@ -86,6 +88,7 @@
       document.getElementById('password').value = '';
       document.getElementById('dashboard').classList.add('hidden');
       document.getElementById('login-box').classList.remove('hidden');
+      document.body.classList.remove('bg-orders', 'bg-staff', 'bg-customers');
     }
 
     // A 401 means the saved login no longer works, so go back to the login box.
@@ -95,6 +98,7 @@
     }
 
     function openDashboard(profile) {
+      currentUserId = profile.id;
       document.getElementById('login-box').classList.add('hidden');
       document.getElementById('dashboard').classList.remove('hidden');
       document.getElementById('who').textContent = profile.fullName;
@@ -113,6 +117,10 @@
       if (names.length > 0) openSection(names[0]);
     }
 
+    // Orders/Staff/Customers each get their own full-page background photo; other
+    // tabs fall back to the plain dark background.
+    const BACKGROUND_TABS = ['orders', 'staff', 'customers'];
+
     function openSection(name) {
       clearInterval(timer);
       say('');
@@ -120,16 +128,22 @@
       for (const button of document.getElementById('tabs').children) {
         button.classList.toggle('active', button.dataset.section === name);
       }
-      panel.replaceChildren(el('p', 'Loading...', 'muted'));
+      for (const tab of BACKGROUND_TABS) document.body.classList.toggle('bg-' + tab, tab === name);
+      panel.replaceChildren(loadingState('Loading ' + SECTIONS[name].label.toLowerCase() + '...'));
+      // Retriggers the panel's entrance animation only on an actual tab switch,
+      // not on every periodic refresh inside a section.
+      panel.classList.remove('panel-enter');
+      void panel.offsetWidth;
+      panel.classList.add('panel-enter');
       SECTIONS[name].show();
     }
 
     // ---------- Orders: kitchen queue and counter payment ----------
 
     const NEXT = {
-      PENDING:   { status: 'PREPARING', label: 'Start preparing' },
-      PREPARING: { status: 'READY',     label: 'Mark ready' },
-      READY:     { status: 'SERVED',    label: 'Mark served' }
+      PENDING:   { status: 'PREPARING', label: 'Start preparing', icon: 'fa-fire-burner' },
+      PREPARING: { status: 'READY',     label: 'Mark ready',      icon: 'fa-bell' },
+      READY:     { status: 'SERVED',    label: 'Mark served',     icon: 'fa-check' }
     };
 
     async function showOrders() {
@@ -147,12 +161,35 @@
       } catch (e) { handleError(e); }
     }
 
+    // Kitchen queue is split into one column per status, so orders at different
+    // stages are never mixed in the same row.
+    const STATUS_COLUMNS = [
+      { status: 'PENDING',   label: 'Pending' },
+      { status: 'PREPARING', label: 'Preparing' },
+      { status: 'READY',     label: 'Ready' },
+      { status: 'SERVED',    label: 'Served' }
+    ];
+
+    function statusColumn(def, matching, tableById) {
+      const column = el('div', null, 'status-column');
+      const head = el('div', null, 'status-column-head');
+      head.append(el('span', def.label, 'badge ' + def.status), el('span', matching.length, 'status-column-count'));
+      column.append(head);
+      for (const order of matching) column.append(orderCard(order, tableById[order.tableId]));
+      return column;
+    }
+
     function drawOrders(orders, tables) {
       const tableById = {};
       for (const t of tables) tableById[t.id] = t;
 
-      const queue = el('div', null, 'grid');
-      for (const order of orders) queue.append(orderCard(order, tableById[order.tableId]));
+      // Columns with nothing in them are left out entirely (not just emptied), so the
+      // board doesn't waste width on "Pending"/"Served" when the kitchen is quiet.
+      const board = el('div', null, 'status-board');
+      for (const def of STATUS_COLUMNS) {
+        const matching = orders.filter(o => o.status === def.status);
+        if (matching.length) board.append(statusColumn(def, matching, tableById));
+      }
 
       // A table can be paid when every open order on it is SERVED.
       const byTable = {};
@@ -165,32 +202,71 @@
         }
       }
 
+      // Visual-only counts from the orders already fetched above; no extra API calls.
+      const servedCount = orders.filter(o => o.status === 'SERVED').length;
+      const preparingCount = orders.filter(o => o.status === 'PREPARING' || o.status === 'PENDING').length;
+      const stats = statsRow([
+        { icon: 'fa-bowl-food', value: orders.length, label: 'Open orders' },
+        { icon: 'fa-fire-burner', value: preparingCount, label: 'In the kitchen' },
+        { icon: 'fa-check-double', value: servedCount, label: 'Served, awaiting payment', accent: true },
+        { icon: 'fa-receipt', value: payBox.children.length, label: 'Tables ready to pay' }
+      ]);
+
       panel.replaceChildren(
-        el('h2', 'Kitchen queue'),
-        orders.length ? queue : el('p', 'No open orders.', 'muted'),
-        el('h2', 'Ready to pay'),
-        payBox.children.length ? payBox : el('p', 'No table is ready to pay.', 'muted')
+        pageBanner('banner-orders', 'Every ticket tells a story of service.'),
+        stats,
+        sectionHeading('Kitchen queue', orders.length + (orders.length === 1 ? ' ticket' : ' tickets')),
+        orders.length ? board : emptyState('fa-mug-hot', 'No open orders. New orders will appear here.'),
+        sectionHeading('Ready to pay', payBox.children.length + (payBox.children.length === 1 ? ' table' : ' tables')),
+        payBox.children.length ? payBox : emptyState('fa-receipt', 'No table is ready to pay yet.')
       );
     }
 
+    // An <h2> with a small live-count pill next to it.
+    function sectionHeading(title, countLabel) {
+      const h = el('h2', title);
+      h.append(el('span', countLabel, 'section-count'));
+      return h;
+    }
+
     function orderCard(order, table) {
-      const card = el('div', null, 'card');
+      // Orders open more than 15 minutes and not yet served are flagged urgent — purely
+      // visual, computed from the createdAt timestamp already on the order.
+      const minutes = minutesSince(order.createdAt);
+      const urgent = order.status !== 'SERVED' && minutes >= 15;
+
+      const card = el('div', null, 'card order-card status-' + order.status + (urgent ? ' urgent' : ''));
       const head = el('div', null, 'row');
       head.append(
         el('span', table ? 'Table ' + table.tableNumber : 'Table ?', 'name'),
         el('span', order.status, 'badge ' + order.status));
-      card.append(head, el('div', timeText(order.createdAt), 'muted'));
+      card.append(head);
 
+      const meta = el('div', null, 'order-meta' + (urgent ? ' urgent-meta' : ''));
+      if (urgent) meta.append(el('span', null, 'fa-solid fa-triangle-exclamation urgent-icon'));
+      else meta.append(el('span', null, 'fa-solid fa-clock muted'));
+      meta.append(el('span', timeText(order.createdAt) + ' · ' + minutes + 'm elapsed', urgent ? '' : 'muted'));
+      if (urgent) meta.append(el('span', 'Urgent', 'urgent-tag'));
+      card.append(meta);
+
+      const items = el('div', null, 'order-items');
       for (const item of order.items) {
-        card.append(el('div', item.quantity + ' × ' + item.name));
-        if (item.notes) card.append(el('div', 'Note: ' + item.notes, 'muted'));
+        const line = el('div', null, 'order-item');
+        line.append(el('span', item.quantity, 'order-item-qty'), el('span', item.name));
+        items.append(line);
+        if (item.notes) items.append(el('div', 'Note: ' + item.notes, 'muted order-note'));
       }
-      card.append(el('div', money(orderTotal(order)), 'muted'));
+      card.append(items);
+
+      const subtotal = el('div', null, 'order-subtotal');
+      subtotal.append(el('span', 'Subtotal', 'muted'), el('strong', money(orderTotal(order))));
+      card.append(subtotal);
 
       const actions = el('div', null, 'actions');
       const next = NEXT[order.status];
       if (next) {
-        const button = el('button', next.label);
+        const button = el('button');
+        button.innerHTML = '<i class="fa-solid ' + next.icon + '"></i> ' + next.label;
         button.onclick = () => changeStatus(order.id, next.status);
         actions.append(button);
       }
@@ -212,30 +288,87 @@
     }
 
     function payCard(table, orders) {
-      const card = el('div', null, 'card');
+      const card = el('div', null, 'card pay-card');
       const total = orders.reduce((sum, o) => sum + orderTotal(o), 0);
-      const head = el('div', null, 'row');
-      head.append(el('span', 'Table ' + table.tableNumber, 'name'), el('strong', money(total)));
+      let knownPoints = null;   // last points balance looked up for the typed phone number
+
+      const head = el('div', null, 'pay-card-head');
+      const tableInfo = el('div');
+      tableInfo.append(
+        el('div', 'Table ' + table.tableNumber, 'name'),
+        el('div', orders.length + (orders.length === 1 ? ' order' : ' orders') + ' · all served', 'muted'));
+      const icon = el('span', null, 'pay-card-icon');
+      icon.innerHTML = '<i class="fa-solid fa-receipt"></i>';
+      head.append(tableInfo, icon);
       card.append(head);
+
+      const items = orders.flatMap(o => o.items);
+      card.append(el('div', items.map(i => i.quantity + '× ' + i.name).join(', '), 'muted pay-summary'));
+
+      const amountValue = el('strong', money(total), 'pay-amount');
+      const amountRow = el('div', null, 'pay-amount-row');
+      amountRow.append(el('span', 'Total amount due', 'muted'), amountValue);
+      card.append(amountRow);
+      const discountNote = el('p', '', 'muted');
+      card.append(discountNote);
 
       card.append(el('label', 'Customer phone number (optional, for loyalty points)'));
       const phone = el('input');
       phone.type = 'tel';
       phone.value = phones[table.qrCodeHash] || '';
-      phone.oninput = () => { phones[table.qrCodeHash] = phone.value; };   // survives the 5-second redraw
+      phone.oninput = () => {
+        phones[table.qrCodeHash] = phone.value;   // survives the 5-second redraw
+        knownPoints = null;
+        updatePreview();
+      };
+      // A different phone means a different balance, so look it up fresh once staff
+      // move on — this is a preview only, the server always recalculates at payment.
+      phone.onblur = async () => {
+        const value = phone.value.trim();
+        if (!value) return;
+        try {
+          const customer = await api('/api/loyalty/lookup', 'POST', { phoneNumber: value });
+          knownPoints = customer.loyaltyPoints;
+        } catch (e) {
+          knownPoints = null;
+        }
+        updatePreview();
+      };
       card.append(phone);
 
       const redeem = el('label', null, 'checkbox-row');
       const redeemCheckbox = el('input');
       redeemCheckbox.type = 'checkbox';
-      redeem.append(redeemCheckbox, ' Redeem 500 points for 15% off');
+      redeem.append(redeemCheckbox, ' Redeem loyalty points for a discount');
+      redeemCheckbox.onchange = updatePreview;
       card.append(redeem);
 
-      const button = el('button', 'Confirm payment');
+      function updatePreview() {
+        let discounted = total;
+        let note = '';
+        if (redeemCheckbox.checked) {
+          const tier = knownPoints == null ? null : loyaltyDiscountForPoints(knownPoints);
+          if (tier) {
+            discounted = total * (1 - tier.rate);
+            note = Math.round(tier.rate * 100) + '% loyalty discount applied';
+          } else {
+            note = knownPoints == null
+              ? 'Enter the phone number to preview the discount'
+              : 'Not enough points yet for a discount';
+          }
+        }
+        amountValue.textContent = money(discounted);
+        discountNote.textContent = note;
+        button.innerHTML = '<i class="fa-solid fa-circle-check"></i> Collect ' + money(discounted);
+      }
+
+      const button = el('button');
       button.onclick = () => pay(table, redeemCheckbox.checked);
       const payActions = el('div', null, 'actions');
       payActions.append(button);
       card.append(payActions);
+
+      updatePreview();
       return card;
     }
 
@@ -287,7 +420,7 @@
         const tables = await api('/api/staff/tables', 'GET', null, auth);
         tables.sort((a, b) => a.tableNumber - b.tableNumber);
         if (tables.length === 0) {
-          panel.replaceChildren(el('p', 'There are no tables yet.', 'muted'));
+          panel.replaceChildren(emptyState('fa-chair', 'There are no tables yet.'));
           return;
         }
 
@@ -298,7 +431,11 @@
           select.append(option);
         }
 
-        const dishes = el('div');
+        const menuLayout = el('div', null, 'menu-layout');
+        const categoryNav = el('div', null, 'category-nav');
+        const dishGrid = el('div', null, 'dish-grid');
+        menuLayout.append(categoryNav, dishGrid);
+
         const cart = {};     // dish id -> { dish, quantity, qtyText, noteInput }
         const count = el('span', '0 items');
         const total = el('strong', '0.00');
@@ -316,20 +453,41 @@
           send.disabled = n === 0;
         };
 
+        // Dishes are grouped by category in a vertical nav on the left; picking a
+        // category swaps the grid on the right, so only one category shows at a time.
+        let menuByCategory = {};
+        const showCategory = (category) => {
+          for (const button of categoryNav.children) {
+            button.classList.toggle('active', button.dataset.category === category);
+          }
+          dishGrid.replaceChildren();
+          for (const dish of menuByCategory[category] || []) {
+            dishGrid.append(dishCard(dish, cart, update));
+          }
+        };
+
         // The menu is loaded for the chosen table. Choosing another table starts a new order.
         const loadMenu = async () => {
           try {
             const menu = await api('/api/menu?t=' + encodeURIComponent(select.value));
-            dishes.replaceChildren();
             for (const key of Object.keys(cart)) delete cart[key];
-            let lastCategory = null;
+
+            menuByCategory = {};
             for (const dish of menu) {
-              if (dish.category !== lastCategory) {
-                dishes.append(el('h2', dish.category));
-                lastCategory = dish.category;
-              }
-              dishes.append(dishCard(dish, cart, update));
+              (menuByCategory[dish.category] = menuByCategory[dish.category] || []).push(dish);
             }
+            const categories = Object.keys(menuByCategory);
+
+            categoryNav.replaceChildren();
+            for (const category of categories) {
+              const button = el('button', category, 'secondary');
+              button.dataset.category = category;
+              button.onclick = () => showCategory(category);
+              categoryNav.append(button);
+            }
+
+            if (categories.length) showCategory(categories[0]);
+            else dishGrid.replaceChildren(emptyState('fa-utensils', 'This table has no available dishes.'));
             update();
           } catch (e) { handleError(e); }
         };
@@ -359,37 +517,48 @@
         barRow.append(summary, send);
         bar.append(barRow);
 
-        panel.replaceChildren(el('label', 'Table'), select, dishes, bar);
+        const tableField = el('div', null, 'form-card');
+        tableField.append(el('label', 'Table'), select);
+        panel.replaceChildren(pageBanner('banner-neworder', 'Where the next great meal begins.'), tableField, menuLayout, bar);
         loadMenu();
       } catch (e) { handleError(e); }
     }
 
-    // One dish with + and - buttons and a note box. "cart" is filled as staff choose.
+    // One dish tile: a uniform photo on top, then details and +/- controls. "cart" is
+    // filled as staff choose. The image itself comes from app.js's dishImage() helper.
     function dishCard(dish, cart, onChange) {
-      const card = el('div', null, 'card');
-      const row = el('div', null, 'row');
+      const card = el('div', null, 'dish-card');
+      const imageWrap = dishImage(dish.name);
+      const qtyBadge = el('span', '0', 'qty-badge hidden');
+      imageWrap.append(qtyBadge);
+      card.append(imageWrap);
 
-      const info = el('div');
-      info.append(el('div', dish.name, 'name'));
+      const body = el('div', null, 'dish-card-body');
+      body.append(el('div', dish.name, 'name'));
       const allergens = dish.allergens || [];
-      info.append(el('div', money(dish.price) + (allergens.length ? ' · Contains: ' + allergens.join(', ') : ''), 'muted'));
+      body.append(el('div', money(dish.price), 'dish-price'));
+      if (allergens.length) body.append(el('div', 'Contains: ' + allergens.join(', '), 'muted'));
 
       const qty = el('div', null, 'qty');
       const minus = el('button', '-', 'secondary');
       const qtyText = el('span', '0');
       const plus = el('button', '+', 'secondary');
       qty.append(minus, qtyText, plus);
-      row.append(info, qty);
+      body.append(qty);
 
       const noteInput = el('input', null, 'note hidden');
       noteInput.placeholder = 'Note for the kitchen (optional)';
-      card.append(row, noteInput);
+      body.append(noteInput);
+      card.append(body);
 
       cart[dish.id] = { dish: dish, quantity: 0, qtyText: qtyText, noteInput: noteInput };
       const change = (step) => {
         const line = cart[dish.id];
         line.quantity = Math.max(0, line.quantity + step);
         qtyText.textContent = line.quantity;
+        qtyBadge.textContent = line.quantity;
+        qtyBadge.classList.toggle('hidden', line.quantity === 0);
+        card.classList.toggle('in-cart', line.quantity > 0);
         noteInput.classList.toggle('hidden', line.quantity === 0);
         onChange();
       };
@@ -398,60 +567,107 @@
       return card;
     }
 
-    // ---------- Menu (admin): add, edit, change price, disable ----------
+    // ---------- Menu (admin): add, edit, change price, delete ----------
 
+    // Deleting a menu item is a soft delete (same /available endpoint as before) so
+    // past orders and receipts still show the item correctly — it just drops out of
+    // the admin's visible list and off the guest menu. Restore brings it back.
     async function showMenu() {
       try {
         const items = await api('/api/admin/menu-items', 'GET', null, auth);
+        const visible = items.filter(i => i.available);
+        const deleted = items.filter(i => !i.available);
 
-        const formBox = el('div', null, 'card');
+        const formBox = el('div', null, 'card form-card');
         openItemForm(formBox, null);
 
         const table = el('table', null, 'list');
         const head = el('tr');
-        for (const title of ['Name', 'Category', 'Price', 'Allergens', 'On menu', '']) head.append(el('th', title));
+        for (const title of ['Name', 'Category', 'Price', 'Allergens', '']) head.append(el('th', title));
         table.append(head);
 
-        for (const item of items) {
+        for (const item of visible) {
           const row = el('tr');
           row.append(el('td', item.name), el('td', item.category), el('td', money(item.price)),
-                     el('td', (item.allergens || []).join(', ')), el('td', item.available ? 'Yes' : 'Hidden'));
+                     el('td', (item.allergens || []).join(', ')));
 
           const edit = el('button', 'Edit', 'secondary');
           edit.onclick = () => { openItemForm(formBox, item); formBox.scrollIntoView(); };
 
-          const toggle = el('button', item.available ? 'Disable' : 'Enable', 'secondary');
-          toggle.onclick = async () => {
+          const del = el('button', 'Delete', 'secondary');
+          del.onclick = async () => {
+            if (!confirm('Delete "' + item.name + '"? It will come off the guest menu, but you can restore it from "Deleted items" below.')) return;
             try {
-              await api('/api/admin/menu-items/' + item.id + '/available', 'PATCH', { available: !item.available }, auth);
-              say(item.name + (item.available ? ' is hidden from guests.' : ' is back on the menu.'));
+              await api('/api/admin/menu-items/' + item.id, 'DELETE', null, auth);
+              say(item.name + ' deleted.');
               showMenu();
             } catch (e) { handleError(e); }
           };
 
           const cell = el('td');
-          cell.append(edit, ' ', toggle);
+          cell.append(edit, ' ', del);
           row.append(cell);
           table.append(row);
         }
-        panel.replaceChildren(formBox, el('h2', 'Menu items'), table);
+
+        const sections = [formBox, el('h2', 'Menu items'),
+          visible.length ? table : emptyState('fa-utensils', 'No menu items yet. Add one above.')];
+
+        if (deleted.length) {
+          const toggle = el('button', 'Show deleted items (' + deleted.length + ')', 'secondary');
+          const deletedTable = el('table', null, 'list hidden');
+          const deletedHead = el('tr');
+          for (const title of ['Name', 'Category', 'Price', '']) deletedHead.append(el('th', title));
+          deletedTable.append(deletedHead);
+          for (const item of deleted) {
+            const row = el('tr');
+            const restore = el('button', 'Restore', 'secondary');
+            restore.onclick = async () => {
+              try {
+                await api('/api/admin/menu-items/' + item.id + '/available', 'PATCH', { available: true }, auth);
+                say(item.name + ' restored.');
+                showMenu();
+              } catch (e) { handleError(e); }
+            };
+            const cell = el('td');
+            cell.append(restore);
+            row.append(el('td', item.name), el('td', item.category), el('td', money(item.price)), cell);
+            deletedTable.append(row);
+          }
+          toggle.onclick = () => {
+            deletedTable.classList.toggle('hidden');
+            toggle.textContent = (deletedTable.classList.contains('hidden') ? 'Show' : 'Hide') + ' deleted items (' + deleted.length + ')';
+          };
+          sections.push(toggle, deletedTable);
+        }
+
+        panel.replaceChildren(pageBanner('banner-menu', 'Crafted dishes, thoughtfully served.'), ...sections);
       } catch (e) { handleError(e); }
     }
 
     // Fills the form box for a new item (item = null) or for editing an item.
     function openItemForm(box, item) {
-      box.replaceChildren(el('h2', item ? 'Edit: ' + item.name : 'New menu item'));
+      box.replaceChildren(el('h2', item ? 'Edit: ' + item.name : 'Add new menu item'));
       const fields = {};
-      const spec = [['name', 'Name', 'text'], ['category', 'Category', 'text'], ['price', 'Price', 'number'],
-                    ['ingredients', 'Ingredients (separated by commas)', 'text'],
-                    ['allergens', 'Allergens (separated by commas)', 'text']];
-      for (const [key, label, type] of spec) {
-        box.append(el('label', label));
+      // 'half' fields sit two to a row; 'full' fields span the whole form width.
+      const spec = [
+        ['name', 'Name', 'text', 'half'],
+        ['category', 'Category', 'text', 'half'],
+        ['price', 'Price (QAR)', 'number', 'half'],
+        ['ingredients', 'Ingredients (separated by commas)', 'text', 'full'],
+        ['allergens', 'Allergens (separated by commas)', 'text', 'full']
+      ];
+      const grid = el('div', null, 'form-grid');
+      for (const [key, label, type, width] of spec) {
+        const field = el('div', null, 'form-field ' + width);
+        field.append(el('label', label));
         fields[key] = el('input');
         fields[key].type = type;
         if (type === 'number') { fields[key].step = '0.01'; fields[key].min = '0'; }
-        box.append(fields[key]);
+        field.append(fields[key]);
+        grid.append(field);
       }
+      box.append(grid);
       if (item) {
         fields.name.value = item.name;
         fields.category.value = item.category;
@@ -478,13 +694,11 @@
         } catch (e) { handleError(e); }
       };
 
+      const cancel = el('button', 'Cancel', 'secondary');
+      cancel.onclick = () => openItemForm(box, null);
+
       const actions = el('div', null, 'actions');
-      actions.append(save);
-      if (item) {
-        const cancel = el('button', 'Cancel', 'secondary');
-        cancel.onclick = () => openItemForm(box, null);
-        actions.append(cancel);
-      }
+      actions.append(save, cancel);
       box.append(actions);
     }
 
@@ -519,7 +733,7 @@
           address,
           el('p', 'localhost only works on this computer. For phones, use this computer\'s IP address, for example http://192.168.1.20:8080', 'muted'),
           print);
-        panel.replaceChildren(controls, grid);
+        panel.replaceChildren(pageBanner('banner-qr', 'A seamless start to every visit.'), controls, grid);
       } catch (e) { handleError(e); }
     }
 
@@ -553,7 +767,7 @@
       try {
         const people = await api('/api/admin/staff', 'GET', null, auth);
 
-        const form = el('div', null, 'card');
+        const form = el('div', null, 'card form-card');
         form.append(el('h2', 'New staff account'));
         const fields = {};
         for (const [key, label, type] of [['username', 'Username', 'text'], ['fullName', 'Full name', 'text'], ['password', 'Password (6 or more characters)', 'password']]) {
@@ -578,27 +792,78 @@
         createActions.append(create);
         form.append(createActions);
 
+        // Deleting a staff account is a soft delete (the existing active-toggle
+        // endpoint, called with active:false) so their name stays on past receipts —
+        // it just drops off the visible staff list. Restore brings it back.
+        const active = people.filter(p => p.active);
+        const deactivated = people.filter(p => !p.active);
+
         const table = el('table', null, 'list');
         const head = el('tr');
-        for (const title of ['Username', 'Name', 'Active', '']) head.append(el('th', title));
+        for (const title of ['Username', 'Name', '']) head.append(el('th', title));
         table.append(head);
-        for (const person of people) {
+        for (const person of active) {
           const row = el('tr');
-          row.append(el('td', person.username), el('td', person.fullName), el('td', person.active ? 'Yes' : 'No'));
-          const toggle = el('button', person.active ? 'Switch off' : 'Switch on', 'secondary');
-          toggle.onclick = async () => {
-            try {
-              await api('/api/admin/staff/' + person.id + '/active', 'PATCH', { active: !person.active }, auth);
-              say('');
-              showStaff();
-            } catch (e) { handleError(e); }
-          };
+          row.append(el('td', person.username), el('td', person.fullName));
+
           const cell = el('td');
-          cell.append(toggle);
+          if (person.id === currentUserId) {
+            cell.append(el('span', 'This is you', 'muted'));
+          } else {
+            const del = el('button', 'Delete', 'secondary');
+            del.onclick = async () => {
+              if (!confirm('Delete the account "' + person.username + '"? You can restore it from "Deactivated staff" below.')) return;
+              try {
+                await api('/api/admin/staff/' + person.id + '/active', 'PATCH', { active: false }, auth);
+                say(person.username + ' deleted.');
+                showStaff();
+              } catch (e) { handleError(e); }
+            };
+            cell.append(del);
+          }
           row.append(cell);
           table.append(row);
         }
-        panel.replaceChildren(form, el('h2', 'Staff accounts'), table);
+
+        const sections = [form, el('h2', 'Staff accounts'),
+          active.length ? table : emptyState('fa-users', 'No staff accounts yet.')];
+
+        if (deactivated.length) {
+          const toggle = el('button', 'Show deactivated staff (' + deactivated.length + ')', 'secondary');
+          const deactivatedTable = el('table', null, 'list hidden');
+          const deactivatedHead = el('tr');
+          for (const title of ['Username', 'Name', '']) deactivatedHead.append(el('th', title));
+          deactivatedTable.append(deactivatedHead);
+          for (const person of deactivated) {
+            const row = el('tr');
+            const restore = el('button', 'Restore', 'secondary');
+            restore.onclick = async () => {
+              try {
+                await api('/api/admin/staff/' + person.id + '/active', 'PATCH', { active: true }, auth);
+                say(person.username + ' restored.');
+                showStaff();
+              } catch (e) { handleError(e); }
+            };
+            const cell = el('td');
+            cell.append(restore);
+            row.append(el('td', person.username), el('td', person.fullName), cell);
+            deactivatedTable.append(row);
+          }
+          toggle.onclick = () => {
+            deactivatedTable.classList.toggle('hidden');
+            toggle.textContent = (deactivatedTable.classList.contains('hidden') ? 'Show' : 'Hide') + ' deactivated staff (' + deactivated.length + ')';
+          };
+          sections.push(toggle, deactivatedTable);
+        }
+
+        // Visual-only count from the staff list already fetched above; no extra API calls.
+        const stats = statsRow([
+          { icon: 'fa-users', value: people.length, label: 'Staff accounts' },
+          { icon: 'fa-user-check', value: active.length, label: 'Active accounts', accent: true },
+          { icon: 'fa-user-xmark', value: deactivated.length, label: 'Deleted accounts' }
+        ]);
+
+        panel.replaceChildren(pageBanner('banner-staff', 'Behind every great meal, a great team.'), stats, ...sections);
       } catch (e) { handleError(e); }
     }
 
@@ -615,10 +880,27 @@
         table.append(head);
         for (const c of customers) {
           const row = el('tr');
-          row.append(el('td', c.phoneNumber), el('td', c.tierLevel), el('td', c.loyaltyPoints), el('td', c.totalOrders));
+
+          const phoneCell = el('td');
+          phoneCell.append(el('span', null, 'fa-solid fa-phone phone-icon'), ' ' + c.phoneNumber);
+
+          const tierCell = el('td');
+          tierCell.append(el('span', c.tierLevel, 'tier-badge tier-' + c.tierLevel.toLowerCase()));
+
+          row.append(phoneCell, tierCell, el('td', c.loyaltyPoints), el('td', c.totalOrders));
           table.append(row);
         }
-        panel.replaceChildren(customers.length ? table : el('p', 'No customers yet.', 'muted'));
+
+        // Visual-only totals from the customer list already fetched above; no extra API calls.
+        const totalOrders = customers.reduce((sum, c) => sum + c.totalOrders, 0);
+        const stats = statsRow([
+          { icon: 'fa-address-book', value: customers.length, label: 'Loyalty members' },
+          { icon: 'fa-receipt', value: totalOrders, label: 'Paid orders total', accent: true }
+        ]);
+
+        const banner = pageBanner('banner-customers', 'Loyalty is earned, one visit at a time.');
+        if (customers.length) panel.replaceChildren(banner, stats, table);
+        else panel.replaceChildren(banner, emptyState('fa-address-book', 'No customers yet. They\'ll show up here after their first paid order.'));
       } catch (e) { handleError(e); }
     }
 

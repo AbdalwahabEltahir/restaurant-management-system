@@ -23,7 +23,8 @@ public class PaymentController {
     /**
      * Guest starts paying their table's bill online. Body is optional:
      * {"phoneNumber": "5555 1234", "redeemDiscount": "true"}. The phone number earns loyalty
-     * points on the payment; redeemDiscount spends 500 of their points for 15% off the bill
+     * points on the payment; redeemDiscount spends points for a discount off the bill, at the
+     * best tier the customer's points reach (see CustomerService.redeemLoyaltyDiscount),
      * before the Stripe session is created (requires a phone number with enough points).
      * Returns the URL of Stripe's hosted payment page to redirect the guest to.
      */
