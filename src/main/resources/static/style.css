@@ -1,31 +1,34 @@
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap');
 @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css');
 
+/* One dark theme app-wide — the staff dashboard and the guest QR menu both use it,
+   so a guest scanning a table's code sees the same look as the staff screens. */
 :root {
-  --brand: #c44d21;
-  --brand-hover: #a83c15;
-  --brand-soft: #fff4ed;
-  --brand-border: #fed7aa;
-  --ink: #1c1917;
-  --ink-secondary: #57534e;
-  --muted: #78716c;
-  --line: #e7e5e4;
-  --line-subtle: #f5f5f4;
-  --bg: #f8fafc;
-  --bg-guest: #faf7f2;
-  --bg-card: #ffffff;
-  --bad: #dc2626;
-  --bad-bg: #fef2f2;
-  --ok: #15803d;
-  --ok-bg: #f0fdf4;
+  --brand: #e8622c;
+  --brand-hover: #f47c48;
+  --brand-soft: rgba(232, 98, 44, 0.14);
+  --brand-border: rgba(232, 98, 44, 0.35);
+  --ink: #f4f3f1;
+  --ink-secondary: #b8b4ad;
+  --muted: #8a8680;
+  --line: #2d2b33;
+  --line-subtle: #26242b;
+  --bg: #121117;
+  --bg-guest: #121117;
+  --bg-card: #1b1a21;
+  --bg-sunken: #19181e;
+  --bad: #f87171;
+  --bad-bg: rgba(248, 113, 113, 0.12);
+  --ok: #4ade80;
+  --ok-bg: rgba(74, 222, 128, 0.12);
   --radius-sm: 8px;
   --radius-md: 14px;
   --radius-lg: 20px;
   --radius-full: 9999px;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.06), 0 2px 6px -1px rgba(0, 0, 0, 0.04);
-  --shadow-lg: 0 12px 28px -4px rgba(28, 25, 23, 0.08), 0 4px 12px -2px rgba(28, 25, 23, 0.04);
-  --shadow-floating: 0 20px 35px -8px rgba(196, 77, 33, 0.28), 0 8px 16px -4px rgba(0, 0, 0, 0.08);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 6px 16px -4px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 16px 36px -8px rgba(0, 0, 0, 0.55);
+  --shadow-floating: 0 20px 35px -8px rgba(232, 98, 44, 0.35), 0 8px 16px -4px rgba(0, 0, 0, 0.45);
   --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   --font-serif: 'Playfair Display', Georgia, serif;
 }
@@ -42,6 +45,7 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
+  transition: background 0.2s ease;
 }
 
 /* Guest body has warm creamy dining tone */
@@ -56,7 +60,7 @@ body.guest-page {
 }
 
 .page.wide {
-  max-width: 1240px;
+  max-width: 1280px;
   padding: 32px 28px 80px;
 }
 
@@ -119,7 +123,7 @@ h2 {
   border-radius: 2px;
 }
 
-/* Staff profile banner (Marco Rossi) */
+/* Staff profile banner */
 #who {
   font-family: var(--font-sans);
   font-size: 1.75rem;
@@ -168,7 +172,7 @@ h2 {
   margin: 4px 0 24px;
   font-size: 0.95rem;
   padding: 12px 18px;
-  background: #ffffff;
+  background: var(--bg-card);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-sm);
@@ -206,13 +210,13 @@ h2 {
 
 #message.ok {
   background: var(--ok-bg);
-  border: 1px solid #bbf7d0;
+  border: 1px solid rgba(74, 222, 128, 0.3);
   color: var(--ok);
 }
 
 #message.error {
   background: var(--bad-bg);
-  border: 1px solid #fecaca;
+  border: 1px solid rgba(248, 113, 113, 0.3);
   color: var(--bad);
 }
 
@@ -222,7 +226,7 @@ h2 {
   align-items: center;
   gap: 8px;
   padding: 6px 14px;
-  background: #ffffff;
+  background: var(--bg-card);
   border: 1px solid var(--line);
   border-radius: var(--radius-full);
   font-size: 0.82rem;
@@ -252,7 +256,7 @@ h2 {
 }
 
 .card:hover {
-  border-color: #cbd5e1;
+  border-color: var(--brand-border);
   box-shadow: var(--shadow-md);
 }
 
@@ -290,6 +294,59 @@ h2 {
   width: fit-content;
 }
 
+/* ---------- Stat tiles: at-a-glance counts (orders served, staff clocked in, etc.) ---------- */
+.stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px;
+  margin: 18px 0 28px;
+}
+
+.stat-tile {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
+}
+
+.stat-tile .stat-icon {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 1.05rem;
+}
+
+.stat-tile .stat-value {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--ink);
+  line-height: 1.1;
+}
+
+.stat-tile .stat-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+
+.stat-tile.accent .stat-icon {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
 /* Inputs & Selects */
 label {
   display: block;
@@ -306,7 +363,7 @@ input, select {
   padding: 10px 14px;
   border: 1.5px solid var(--line);
   border-radius: var(--radius-sm);
-  background: #ffffff;
+  background: var(--bg-card);
   color: var(--ink);
   transition: all 0.15s ease;
   outline: none;
@@ -314,7 +371,29 @@ input, select {
 
 input:focus, select:focus {
   border-color: var(--brand);
-  box-shadow: 0 0 0 3px rgba(196, 77, 33, 0.14);
+  box-shadow: 0 0 0 3px rgba(232, 98, 44, 0.2);
+}
+
+/* A form never spans the full width of a wide desktop card — long lines of empty
+   input are hard to scan, so forms stay capped and laid out in a readable grid. */
+.form-card {
+  max-width: 640px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+}
+
+.form-field.full {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 480px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Loyalty discount redeem checkbox */
@@ -367,15 +446,15 @@ button:active {
 }
 
 button.secondary {
-  background: #ffffff;
+  background: var(--bg-card);
   color: var(--ink-secondary);
   border: 1.5px solid var(--line);
   box-shadow: var(--shadow-sm);
 }
 
 button.secondary:hover {
-  background: #f8fafc;
-  border-color: #cbd5e1;
+  background: var(--bg-sunken);
+  border-color: var(--brand-border);
   color: var(--ink);
   box-shadow: var(--shadow-sm);
 }
@@ -401,9 +480,10 @@ button:disabled {
   flex-wrap: wrap;
   margin: 20px 0 28px;
   padding: 6px;
-  background: #e2e8f0;
+  background: var(--bg-sunken);
   border-radius: var(--radius-md);
   width: fit-content;
+  border: 1px solid var(--line);
 }
 
 .tabs button {
@@ -419,23 +499,543 @@ button:disabled {
 
 .tabs button:hover {
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.06);
   transform: none;
   box-shadow: none;
 }
 
 .tabs button.active {
-  background: #ffffff;
+  background: var(--bg-card);
   color: var(--brand);
   border: 0;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
 }
 
-/* Grid for kitchen queue & settlement cards */
+/* Grid for settlement cards */
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 20px;
+}
+
+/* Kitchen queue: one column per order status, so stages never mix in the same row.
+   auto-fit means an empty status (left out by drawOrders entirely) doesn't leave a
+   blank track behind — the remaining columns simply take up the freed width. */
+.status-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 640px) {
+  .status-board {
+    grid-template-columns: 1fr;
+  }
+}
+
+.status-column {
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  min-height: 120px;
+  max-width: 420px;
+}
+
+.status-column-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.status-column-count {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.status-column .card:last-child {
+  margin-bottom: 0;
+}
+
+/* ---------- Full-page background photo (Orders / Staff / Customers tabs) ---------- */
+/* A fixed, dimmed photo behind the whole page. The dark scrim (strong enough that
+   every existing card/text stays exactly as readable as on the plain background)
+   sits between the photo and the content; background-attachment: fixed keeps it
+   steady while the panel scrolls over it. */
+body.bg-orders, body.bg-staff, body.bg-customers {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+body.bg-orders {
+  background-image: linear-gradient(rgba(18, 17, 23, 0.92), rgba(18, 17, 23, 0.92)), url('/images/orders.avif');
+}
+
+body.bg-staff {
+  background-image: linear-gradient(rgba(18, 17, 23, 0.92), rgba(18, 17, 23, 0.92)), url('/images/staff.avif');
+}
+
+body.bg-customers {
+  background-image: linear-gradient(rgba(18, 17, 23, 0.92), rgba(18, 17, 23, 0.92)), url('/images/customers.jpeg');
+}
+
+@media (max-width: 760px) {
+  /* iOS Safari handles a fixed background poorly on short viewports; scroll with
+     the page there instead of fighting it. */
+  body.bg-orders, body.bg-staff, body.bg-customers {
+    background-attachment: scroll;
+  }
+}
+
+/* ---------- Banner, one per dashboard tab ---------- */
+/* A larger illustration with a short quote beside it. The image box is still
+   well under the source images' native resolution (~450-700px wide), so this is
+   a downscale, not an upscale — it stays sharp at this size. */
+.page-banner {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 12px 20px 12px 12px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
+}
+
+.page-banner-image {
+  flex-shrink: 0;
+  width: 180px;
+  height: 112px;
+  border-radius: var(--radius-sm);
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-position: center;
+  border: 1px solid var(--line);
+}
+
+.page-banner-quote {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 1.2rem;
+  color: var(--ink-secondary);
+  line-height: 1.4;
+}
+
+.page-banner-quote i {
+  color: var(--brand);
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.banner-orders .page-banner-image     { background-image: url('/images/orders%20banner.jpg'); }
+.banner-neworder .page-banner-image   { background-image: url('/images/new%20order%20banner.avif'); }
+.banner-qr .page-banner-image         { background-image: url('/images/tables%20banner.jpeg'); }
+.banner-menu .page-banner-image       { background-image: url('/images/menu%20banner.jpeg'); }
+.banner-staff .page-banner-image      { background-image: url('/images/staff%20banner.jpeg'); }
+.banner-customers .page-banner-image  { background-image: url('/images/customers%20banner.avif'); }
+
+@media (max-width: 640px) {
+  .page-banner-image {
+    width: 110px;
+    height: 72px;
+  }
+  .page-banner-quote {
+    font-size: 1rem;
+  }
+}
+
+/* Live-count pill shown next to a section heading, e.g. "Kitchen queue  3 tickets" */
+.section-count {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- Kitchen queue order cards ---------- */
+/* A colored stripe on the left edge reads faster than the small status badge alone
+   when scanning a column of tickets at a glance. */
+.order-card {
+  border-left: 4px solid var(--line);
+  border-top: none;
+}
+
+.order-card.status-PENDING { border-left-color: #fbbf24; }
+.order-card.status-PREPARING { border-left-color: #38bdf8; }
+.order-card.status-READY { border-left-color: #4ade80; }
+.order-card.status-SERVED { border-left-color: var(--line); }
+
+.order-card.urgent {
+  border-left-color: var(--bad);
+  box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.25), var(--shadow-sm);
+}
+
+.order-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 12px;
+  color: var(--muted);
+}
+
+/* Elapsed time and the urgency tag sit together in one tinted strip once a ticket
+   crosses the threshold, instead of a separate badge floating elsewhere on the card. */
+.order-meta.urgent-meta {
+  color: var(--bad);
+  background: var(--bad-bg);
+  border: 1px solid rgba(248, 113, 113, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  margin: 2px 0 12px;
+}
+
+.urgent-icon {
+  animation: urgentPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes urgentPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .urgent-icon {
+    animation: none;
+  }
+}
+
+.urgent-tag {
+  margin-left: auto;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--bad);
+  background: rgba(248, 113, 113, 0.18);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.order-items {
+  padding: 2px 0 4px;
+}
+
+.order-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  font-weight: 500;
+}
+
+.order-item-qty {
+  flex-shrink: 0;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 7px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 0.78rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.order-note {
+  margin: -2px 0 6px 32px;
+  font-size: 0.82rem;
+}
+
+.order-subtotal {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  font-size: 1.1rem;
+}
+
+/* ---------- Ready-to-pay cards ---------- */
+.pay-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.pay-card-icon {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-sm);
+  background: var(--ok-bg);
+  color: var(--ok);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+}
+
+.pay-summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.pay-amount-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 12px 0;
+  border-top: 1px dashed var(--line);
+  border-bottom: 1px dashed var(--line);
+  margin-bottom: 4px;
+}
+
+.pay-amount {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--brand);
+}
+
+/* ---------- New order: vertical category nav + a rich, uniform dish grid ---------- */
+.menu-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  margin-top: 18px;
+}
+
+.category-nav {
+  flex: 0 0 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: sticky;
+  top: 16px;
+}
+
+.category-nav button {
+  justify-content: flex-start;
+  background: transparent;
+  color: var(--ink-secondary);
+  border: 1px solid transparent;
+  box-shadow: none;
+  font-weight: 600;
+  text-align: left;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+}
+
+.category-nav button:hover {
+  background: var(--bg-sunken);
+  color: var(--ink);
+  transform: none;
+  box-shadow: none;
+}
+
+.category-nav button.active {
+  background: var(--brand-soft);
+  color: var(--brand);
+  border-color: var(--brand-border);
+  box-shadow: none;
+}
+
+.dish-grid {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 18px;
+}
+
+.dish-card {
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dish-card:hover {
+  border-color: var(--brand-border);
+  box-shadow: var(--shadow-md);
+}
+
+.dish-card.in-cart {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 1px var(--brand);
+}
+
+/* Every dish photo renders at the same width/height regardless of the source
+   image's own size — a fixed-ratio box with object-fit keeps the grid tidy. */
+.dish-image {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.dish-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.dish-image.no-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--brand-soft), var(--bg-sunken));
+}
+
+.dish-image.no-image::before {
+  content: '\f2e7';
+  font-family: 'Font Awesome 6 Free';
+  font-weight: 900;
+  font-size: 1.8rem;
+  color: var(--brand);
+  opacity: 0.6;
+}
+
+.qty-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: var(--radius-full);
+  background: var(--brand);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.dish-card-body {
+  padding: 14px 16px 16px;
+}
+
+.dish-card-body .name {
+  font-size: 1rem;
+  margin-bottom: 2px;
+}
+
+.dish-price {
+  font-weight: 700;
+  color: var(--brand);
+  font-size: 0.95rem;
+}
+
+.dish-card-body .qty {
+  margin-top: 12px;
+  justify-content: space-between;
+}
+
+.dish-card-body .qty button {
+  flex: 0 0 auto;
+}
+
+/* Guest menu: smaller, denser tiles in a uniform grid — square photos, like a
+   sudoku board of dishes, rather than the larger landscape cards staff use. */
+.guest-dish-grid {
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.guest-dish-grid .dish-image {
+  aspect-ratio: 1 / 1;
+}
+
+.guest-dish-grid .dish-image.no-image::before {
+  font-size: 1.3rem;
+}
+
+.guest-dish-grid .qty-badge {
+  top: 6px;
+  right: 6px;
+  min-width: 20px;
+  height: 20px;
+  font-size: 0.7rem;
+}
+
+.guest-dish-grid .dish-card-body {
+  padding: 8px 10px 10px;
+}
+
+.guest-dish-grid .dish-card-body .name {
+  font-size: 0.82rem;
+  line-height: 1.25;
+  margin-bottom: 1px;
+}
+
+.guest-dish-grid .dish-price {
+  font-size: 0.8rem;
+}
+
+.guest-dish-grid .dish-card-body .muted {
+  font-size: 0.72rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.guest-dish-grid .dish-card-body .qty {
+  margin-top: 8px;
+  gap: 6px;
+}
+
+.guest-dish-grid .dish-card-body .qty button {
+  padding: 3px 9px;
+  font-size: 0.95rem;
+}
+
+.guest-dish-grid .note {
+  font-size: 0.78rem;
+  padding: 7px 10px;
+}
+
+@media (max-width: 760px) {
+  .menu-layout {
+    flex-direction: column;
+  }
+  .category-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: 100%;
+    position: static;
+  }
 }
 
 /* Kitchen order card details */
@@ -444,7 +1044,7 @@ button:disabled {
   flex-direction: column;
   justify-content: space-between;
   border-top: 4px solid var(--brand);
-  background: #ffffff;
+  background: var(--bg-card);
 }
 
 .grid .card .row:first-child {
@@ -487,27 +1087,27 @@ button:disabled {
 }
 
 .badge.PENDING {
-  background: #fef3c7;
-  color: #92400e;
-  border: 1px solid #fde68a;
+  background: rgba(251, 191, 36, 0.14);
+  color: #fcd34d;
+  border: 1px solid rgba(251, 191, 36, 0.3);
 }
 
 .badge.PREPARING {
-  background: #e0f2fe;
-  color: #0369a1;
-  border: 1px solid #bae6fd;
+  background: rgba(56, 189, 248, 0.14);
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.3);
 }
 
 .badge.READY {
-  background: #dcfce7;
-  color: #15803d;
-  border: 1px solid #bbf7d0;
+  background: rgba(74, 222, 128, 0.14);
+  color: #86efac;
+  border: 1px solid rgba(74, 222, 128, 0.3);
 }
 
 .badge.SERVED {
-  background: #f1f5f9;
-  color: #475569;
-  border: 1px solid #cbd5e1;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink-secondary);
+  border: 1px solid var(--line);
 }
 
 /* Ready to pay card layout */
@@ -520,7 +1120,7 @@ button:disabled {
 /* Guest "Your orders" box styling */
 #orders .card {
   border: 1.5px solid var(--brand-border);
-  background: #ffffff;
+  background: var(--bg-card);
 }
 
 #orders .card .row:first-child {
@@ -547,7 +1147,7 @@ button:disabled {
   font-size: 1.35rem;
   font-weight: 800;
   color: var(--ink);
-  background: #fff7ed;
+  background: var(--brand-soft);
   border: 1.5px solid var(--brand-border);
   border-radius: var(--radius-md);
   padding: 18px 22px;
@@ -556,8 +1156,8 @@ button:disabled {
 
 /* Receipt box */
 #receipt .card {
-  border: 2px dashed #cbd5e1;
-  background: #ffffff;
+  border: 2px dashed var(--line);
+  background: var(--bg-card);
   max-width: 440px;
   margin: 20px auto;
   padding: 24px;
@@ -613,7 +1213,7 @@ button:disabled {
 .cart-bar {
   position: sticky;
   bottom: 20px;
-  background: #ffffff;
+  background: var(--bg-card);
   border: 1.5px solid var(--brand-border);
   border-radius: var(--radius-md);
   padding: 16px 24px;
@@ -627,7 +1227,7 @@ table.list {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  background: #fff;
+  background: var(--bg-card);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   overflow: hidden;
@@ -636,7 +1236,7 @@ table.list {
 }
 
 table.list th {
-  background: #f8fafc;
+  background: var(--bg-sunken);
   text-align: left;
   padding: 14px 16px;
   font-size: 0.85rem;
@@ -656,7 +1256,43 @@ table.list td {
 }
 
 table.list tr:hover td {
-  background: #fafaf9;
+  background: var(--bg-sunken);
+}
+
+.phone-icon {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-right: 2px;
+}
+
+/* Loyalty tier badges */
+.tier-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 11px;
+  border-radius: var(--radius-full);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.tier-badge.tier-bronze {
+  background: rgba(205, 127, 50, 0.16);
+  color: #e0a373;
+  border: 1px solid rgba(205, 127, 50, 0.35);
+}
+
+.tier-badge.tier-silver {
+  background: rgba(192, 192, 201, 0.16);
+  color: #d4d4db;
+  border: 1px solid rgba(192, 192, 201, 0.35);
+}
+
+.tier-badge.tier-gold {
+  background: rgba(234, 179, 8, 0.16);
+  color: #fbd24a;
+  border: 1px solid rgba(234, 179, 8, 0.35);
 }
 
 /* QR Code cards */
@@ -666,7 +1302,7 @@ table.list tr:hover td {
   display: flex;
   flex-direction: column;
   align-items: center;
-  background: #ffffff;
+  background: var(--bg-card);
 }
 
 .qr .name {
@@ -711,6 +1347,11 @@ table.list tr:hover td {
 .narrow h1 {
   text-align: center;
   font-size: 1.75rem;
+  margin-bottom: 8px;
+}
+
+.narrow .login-sub {
+  text-align: center;
   margin-bottom: 24px;
 }
 
@@ -742,7 +1383,7 @@ table.list tr:hover td {
   bottom: 24px;
   z-index: 50;
   width: min(390px, calc(100vw - 32px));
-  background: #ffffff;
+  background: var(--bg-card);
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   padding: 18px;
@@ -776,7 +1417,7 @@ table.list tr:hover td {
   font-size: 0.9rem;
   line-height: 1.45;
   max-width: 85%;
-  background: #f5f5f4;
+  background: var(--bg-sunken);
   color: var(--ink);
   align-self: flex-start;
   border-bottom-left-radius: 4px;
@@ -804,6 +1445,50 @@ table.list tr:hover td {
 .chat-send button {
   border-radius: var(--radius-full);
   padding: 10px 18px;
+}
+
+/* ---------- Empty / loading states ---------- */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.empty-state > span {
+  font-size: 1.9rem;
+  color: var(--brand);
+  opacity: 0.55;
+}
+
+.empty-state p {
+  margin: 0;
+  max-width: 320px;
+}
+
+.loading-state > span {
+  color: var(--ink-secondary);
+  opacity: 1;
+}
+
+/* ---------- Micro-transitions: panel switches and card entrances feel alive ---------- */
+@keyframes panelFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.panel-enter {
+  animation: panelFadeIn 0.22s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-enter {
+    animation: none;
+  }
 }
 
 @media print {

@@ -39,6 +39,18 @@ public class OrderController {
         return orderService.openOrdersForTable(qrCodeHash);
     }
 
+    /**
+     * A guest places their own order from the table's QR-code page. Same validation and
+     * business rules as the staff endpoint below (same service method) — only who is
+     * allowed to call it differs. Order status can still only be changed by staff, via
+     * the PATCH endpoint further down, which stays behind userService.authorize.
+     */
+    @PostMapping("/orders/table/{qrCodeHash}")
+    @ResponseStatus(HttpStatus.CREATED)
+    public Order placeAsGuest(@PathVariable String qrCodeHash, @RequestBody List<OrderService.Line> lines) {
+        return orderService.placeOrder(qrCodeHash, lines);
+    }
+
     // Paying online is handled by PaymentController, which talks to Stripe Checkout.
 
     // ---------- Staff (login required, section "orders") ----------
@@ -82,8 +94,9 @@ public class OrderController {
     /**
      * Staff confirm that the table paid at the counter and get the receipt.
      * Body is optional: {"phoneNumber": "5555 1234", "redeemDiscount": "true"}. The phone
-     * number adds loyalty points for that customer; redeemDiscount spends 500 of their points
-     * for 15% off the bill (requires a phone number with enough points).
+     * number adds loyalty points for that customer; redeemDiscount spends points for a
+     * discount off the bill, at the best tier the customer's points reach (requires a phone
+     * number with enough points).
      */
     @PostMapping("/staff/orders/table/{qrCodeHash}/pay")
     public OrderService.Receipt pay(

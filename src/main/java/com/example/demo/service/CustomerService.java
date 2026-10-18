@@ -2,6 +2,8 @@ package com.example.demo.service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -17,16 +19,27 @@ public class CustomerService {
 
     private static final String DEFAULT_COUNTRY_CODE = "+974"; // Qatar
 
+    /** One rung of the loyalty discount ladder: spend this many points for this much off. */
+    private record DiscountTier(int points, BigDecimal rate) {
+    }
+
     private final CustomerRepository customers;
-    private final int discountThresholdPoints;
-    private final BigDecimal discountRate;
+    private final List<DiscountTier> discountTiers; // sorted highest points first
 
     public CustomerService(CustomerRepository customers,
-            @Value("${app.loyalty.discount-threshold-points:500}") int discountThresholdPoints,
-            @Value("${app.loyalty.discount-rate:0.15}") BigDecimal discountRate) {
+            @Value("${app.loyalty.discount-tiers-points:500,1000,2000}") int[] discountTiersPoints,
+            @Value("${app.loyalty.discount-tiers-rates:0.15,0.25,0.40}") BigDecimal[] discountTiersRates) {
         this.customers = customers;
-        this.discountThresholdPoints = discountThresholdPoints;
-        this.discountRate = discountRate;
+        if (discountTiersPoints.length != discountTiersRates.length) {
+            throw new IllegalStateException(
+                    "app.loyalty.discount-tiers-points and app.loyalty.discount-tiers-rates must list the same number of values");
+        }
+        List<DiscountTier> tiers = new ArrayList<>();
+        for (int i = 0; i < discountTiersPoints.length; i++) {
+            tiers.add(new DiscountTier(discountTiersPoints[i], discountTiersRates[i]));
+        }
+        tiers.sort(Comparator.comparingInt(DiscountTier::points).reversed());
+        this.discountTiers = List.copyOf(tiers);
     }
 
     /** Finds the customer with this phone number, or creates a new profile (FR-4.1). */
@@ -56,18 +69,20 @@ public class CustomerService {
     }
 
     /**
-     * Redeems the loyalty discount (FR-4.4): a customer with at least the threshold of points
-     * gets a flat percentage off their bill, and that many points are spent. Returns the
-     * discount rate (e.g. 0.15 for 15%) to apply to the bill.
+     * Redeems the loyalty discount (FR-4.4): a customer gets the best percentage off their
+     * bill that their points reach on the ladder (500 pts → 15%, 1000 → 25%, 2000 → 40% by
+     * default), and that tier's points are spent — not stacked with other tiers. Returns the
+     * discount rate (e.g. 0.25 for 25%) to apply to the bill.
      */
     public BigDecimal redeemLoyaltyDiscount(String customerId) {
         Customer c = getById(customerId);
-        if (c.getLoyaltyPoints() < discountThresholdPoints) {
-            throw bad("Not enough points for the loyalty discount");
-        }
-        c.setLoyaltyPoints(c.getLoyaltyPoints() - discountThresholdPoints);
+        DiscountTier tier = discountTiers.stream()
+                .filter(t -> c.getLoyaltyPoints() >= t.points())
+                .findFirst()
+                .orElseThrow(() -> bad("Not enough points for the loyalty discount"));
+        c.setLoyaltyPoints(c.getLoyaltyPoints() - tier.points());
         customers.save(c);
-        return discountRate;
+        return tier.rate();
     }
 
     private Customer getById(String id) {
