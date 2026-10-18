@@ -81,7 +81,9 @@ public class OrderController {
 
     /**
      * Staff confirm that the table paid at the counter and get the receipt.
-     * Body is optional: {"phoneNumber": "5555 1234"}, which adds loyalty points for that customer.
+     * Body is optional: {"phoneNumber": "5555 1234", "redeemDiscount": "true"}. The phone
+     * number adds loyalty points for that customer; redeemDiscount spends 500 of their points
+     * for 15% off the bill (requires a phone number with enough points).
      */
     @PostMapping("/staff/orders/table/{qrCodeHash}/pay")
     public OrderService.Receipt pay(
@@ -90,6 +92,7 @@ public class OrderController {
             @RequestBody(required = false) Map<String, String> body) {
         userService.authorize(auth, "orders");
         String phone = (body == null) ? null : body.get("phoneNumber");
-        return orderService.completePayment(qrCodeHash, phone);
+        boolean redeemDiscount = body != null && "true".equalsIgnoreCase(body.get("redeemDiscount"));
+        return orderService.completePayment(qrCodeHash, phone, redeemDiscount);
     }
 }

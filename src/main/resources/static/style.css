@@ -317,6 +317,26 @@ input:focus, select:focus {
   box-shadow: 0 0 0 3px rgba(196, 77, 33, 0.14);
 }
 
+/* Loyalty discount redeem checkbox */
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  cursor: pointer;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: var(--brand);
+  cursor: pointer;
+}
+
 /* Buttons */
 button {
   font-family: inherit;

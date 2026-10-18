@@ -32,6 +32,7 @@
       <h2>Pay your bill</h2>
       <div class="card">
         <p id="pay-total" class="name"></p>
+        <label class="checkbox-row"><input id="redeem-discount" type="checkbox"> Redeem 500 points for 15% off (enter your phone number in Loyalty points below first)</label>
         <p class="muted">You'll enter your card details on Stripe's secure payment page. We never see or store your card.</p>
         <button id="pay-button">Pay online</button>
         <p id="pay-result" class="muted"></p>
@@ -171,14 +172,24 @@
 
     // Shows or hides the "Pay your bill" section and keeps its total current.
     // Kept separate from drawOrders' DOM so a payment in progress isn't wiped by the next poll.
+    let lastTableTotal = 0;
     function updatePaySection(tableTotal) {
+      lastTableTotal = tableTotal;
       const section = document.getElementById('pay-section');
       if (tableTotal <= 0) {
         section.classList.add('hidden');
         return;
       }
       section.classList.remove('hidden');
-      document.getElementById('pay-total').textContent = 'Total to pay: ' + money(tableTotal);
+      drawPayTotal();
+    }
+
+    // Shows the 15% discounted estimate once the guest ticks the redeem checkbox.
+    function drawPayTotal() {
+      const redeemDiscount = document.getElementById('redeem-discount').checked;
+      const total = redeemDiscount ? lastTableTotal * 0.85 : lastTableTotal;
+      document.getElementById('pay-total').textContent = 'Total to pay: ' + money(total) +
+          (redeemDiscount ? ' (15% loyalty discount applied)' : '');
     }
 
     // Starts a Stripe Checkout Session for this table's bill, then sends the guest there to
@@ -189,8 +200,12 @@
       result.textContent = 'Taking you to the payment page...';
       try {
         const phoneNumber = document.getElementById('phone').value;
+        const redeemDiscount = document.getElementById('redeem-discount').checked;
+        const body = {};
+        if (phoneNumber) body.phoneNumber = phoneNumber;
+        if (redeemDiscount) body.redeemDiscount = 'true';
         const session = await api('/api/orders/table/' + encodeURIComponent(code) + '/pay/online',
-                                   'POST', phoneNumber ? { phoneNumber } : {});
+                                   'POST', body);
         location.href = session.checkoutUrl;
       } catch (e) {
         result.className = 'error';
@@ -243,6 +258,7 @@
     document.getElementById('chat-input').onkeydown = (event) => { if (event.key === 'Enter') ask(); };
 
     document.getElementById('pay-button').onclick = payOnline;
+    document.getElementById('redeem-discount').onchange = drawPayTotal;
 
     document.getElementById('points-button').onclick = async () => {
       const result = document.getElementById('points-result');

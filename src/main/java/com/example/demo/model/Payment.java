@@ -36,6 +36,9 @@ public class Payment {
     private BigDecimal amount;
     private Status status;
 
+    /** True if the 15% loyalty discount was redeemed for this bill. */
+    private boolean discountApplied;
+
     /** Set once the Stripe Checkout session for this payment is created. STRIPE payments only. */
     private String stripeSessionId;
 
@@ -77,6 +80,9 @@ public class Payment {
 
     public Status getStatus() { return status; }
     public void setStatus(Status status) { this.status = status; }
+
+    public boolean isDiscountApplied() { return discountApplied; }
+    public void setDiscountApplied(boolean discountApplied) { this.discountApplied = discountApplied; }
 
     public String getStripeSessionId() { return stripeSessionId; }
     public void setStripeSessionId(String stripeSessionId) { this.stripeSessionId = stripeSessionId; }

@@ -1,6 +1,7 @@
 package com.example.demo.service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
@@ -82,10 +83,12 @@ public class OrderService {
         private final long pointsEarned;       // 0 if no phone number is linked
         private final long pointsBalance;
         private final String tier;
+        private final boolean discountApplied;
 
         public Receipt(int tableNumber, String method, String providerRef, Instant paidAt,
                        List<Order.Item> items, BigDecimal total, List<String> orderIds,
-                       String customerPhone, long pointsEarned, long pointsBalance, String tier) {
+                       String customerPhone, long pointsEarned, long pointsBalance, String tier,
+                       boolean discountApplied) {
             this.tableNumber = tableNumber;
             this.method = method;
             this.providerRef = providerRef;
@@ -97,6 +100,7 @@ public class OrderService {
             this.pointsEarned = pointsEarned;
             this.pointsBalance = pointsBalance;
             this.tier = tier;
+            this.discountApplied = discountApplied;
         }
 
         public int getTableNumber() { return tableNumber; }
@@ -110,6 +114,7 @@ public class OrderService {
         public long getPointsEarned() { return pointsEarned; }
         public long getPointsBalance() { return pointsBalance; }
         public String getTier() { return tier; }
+        public boolean isDiscountApplied() { return discountApplied; }
     }
 
     /** Staff place an order for a table (FR-1.2). The table code says which table. */
@@ -196,19 +201,22 @@ public class OrderService {
         return customer;
     }
 
-    /** A table's unpaid bill: the table itself, its served orders, and who to credit points to. */
-    private record Bill(RestaurantTable table, List<Order> openOrders, Customer customer) {
+    /** A table's unpaid bill: the table itself, its served orders, who to credit points to, and
+     *  the loyalty discount rate redeemed for it (zero if none was redeemed). */
+    private record Bill(RestaurantTable table, List<Order> openOrders, Customer customer, BigDecimal discountRate) {
         BigDecimal total() {
-            return openOrders.stream().map(Order::subtotal).reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal subtotal = openOrders.stream().map(Order::subtotal).reduce(BigDecimal.ZERO, BigDecimal::add);
+            return subtotal.multiply(BigDecimal.ONE.subtract(discountRate)).setScale(2, RoundingMode.HALF_UP);
         }
     }
 
     /**
      * Loads and validates a table's bill: the table must exist, have open orders, and every
      * open order must be Served. The phone number given wins for loyalty points; otherwise the
-     * number already linked to the table's orders is used, if any.
+     * number already linked to the table's orders is used, if any. If redeemDiscount is true,
+     * the customer must be known and have enough points (FR-4.4); their points are spent now.
      */
-    private Bill loadBill(String qrCodeHash, String phoneNumber) {
+    private Bill loadBill(String qrCodeHash, String phoneNumber, boolean redeemDiscount) {
         RestaurantTable table = findTable(qrCodeHash);
         List<Order> open = orders.findByTableIdAndStatusIn(table.getId(), OPEN);
         if (open.isEmpty()) {
@@ -228,7 +236,15 @@ public class OrderService {
                 customer = customers.findById(linkedId).orElse(null);
             }
         }
-        return new Bill(table, open, customer);
+
+        BigDecimal discountRate = BigDecimal.ZERO;
+        if (redeemDiscount) {
+            if (customer == null) {
+                throw bad("Enter a phone number to redeem the loyalty discount");
+            }
+            discountRate = customerService.redeemLoyaltyDiscount(customer.getId());
+        }
+        return new Bill(table, open, customer, discountRate);
     }
 
     /**
@@ -237,10 +253,11 @@ public class OrderService {
      * beginOnlineCheckout and finalizeOnlinePayment instead. Returns the receipt.
      */
     @Transactional
-    public Receipt completePayment(String qrCodeHash, String phoneNumber) {
-        Bill bill = loadBill(qrCodeHash, phoneNumber);
+    public Receipt completePayment(String qrCodeHash, String phoneNumber, boolean redeemDiscount) {
+        Bill bill = loadBill(qrCodeHash, phoneNumber, redeemDiscount);
         Payment payment = new Payment(bill.table().getId(), idOf(bill.customer()), orderIdsOf(bill.openOrders()),
                 Payment.Method.COUNTER, bill.total(), Payment.Status.PAID);
+        payment.setDiscountApplied(redeemDiscount);
         return settle(bill, payment);
     }
 
@@ -253,10 +270,11 @@ public class OrderService {
      * PENDING until Stripe confirms it.
      */
     @Transactional
-    public CheckoutInit beginOnlineCheckout(String qrCodeHash, String phoneNumber) {
-        Bill bill = loadBill(qrCodeHash, phoneNumber);
+    public CheckoutInit beginOnlineCheckout(String qrCodeHash, String phoneNumber, boolean redeemDiscount) {
+        Bill bill = loadBill(qrCodeHash, phoneNumber, redeemDiscount);
         Payment payment = new Payment(bill.table().getId(), idOf(bill.customer()), orderIdsOf(bill.openOrders()),
                 Payment.Method.STRIPE, bill.total(), Payment.Status.PENDING);
+        payment.setDiscountApplied(redeemDiscount);
         return new CheckoutInit(payments.save(payment), bill.table().getTableNumber());
     }
 
@@ -289,7 +307,7 @@ public class OrderService {
 
         payment.setStatus(Payment.Status.PAID);
         payment.setProviderRef(providerRef);
-        return settle(new Bill(table, open, customer), payment);
+        return settle(new Bill(table, open, customer, BigDecimal.ZERO), payment);
     }
 
     /** Marks a bill's orders Paid, frees the table, adds loyalty points, and saves the payment. */
@@ -338,7 +356,8 @@ public class OrderService {
 
         return new Receipt(table.getTableNumber(), payment.getMethod().name(), payment.getProviderRef(),
                 Instant.now(), items, payment.getAmount(), payment.getOrderIds(),
-                customer == null ? null : customer.getPhoneNumber(), pointsEarned, pointsBalance, tier);
+                customer == null ? null : customer.getPhoneNumber(), pointsEarned, pointsBalance, tier,
+                payment.isDiscountApplied());
     }
 
     /** The loyalty points a customer has right now. */
