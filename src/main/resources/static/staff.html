@@ -225,18 +225,25 @@
       phone.oninput = () => { phones[table.qrCodeHash] = phone.value; };   // survives the 5-second redraw
       card.append(phone);
 
+      const redeem = el('label', null, 'checkbox-row');
+      const redeemCheckbox = el('input');
+      redeemCheckbox.type = 'checkbox';
+      redeem.append(redeemCheckbox, ' Redeem 500 points for 15% off');
+      card.append(redeem);
+
       const button = el('button', 'Confirm payment');
-      button.onclick = () => pay(table);
+      button.onclick = () => pay(table, redeemCheckbox.checked);
       const payActions = el('div', null, 'actions');
       payActions.append(button);
       card.append(payActions);
       return card;
     }
 
-    async function pay(table) {
+    async function pay(table, redeemDiscount) {
       const phone = (phones[table.qrCodeHash] || '').trim();
       const body = {};
       if (phone) body.phoneNumber = phone;
+      if (redeemDiscount) body.redeemDiscount = 'true';
       try {
         const receipt = await api('/api/staff/orders/table/' + encodeURIComponent(table.qrCodeHash) + '/pay',
                                   'POST', body, auth);
@@ -259,6 +266,7 @@
       const totalLine = el('div', null, 'row');
       totalLine.append(el('strong', 'Total'), el('strong', money(receipt.total)));
       card.append(totalLine);
+      if (receipt.discountApplied) card.append(el('div', '15% loyalty discount applied', 'ok'));
 
       card.append(el('div', 'Paid at the counter', 'muted'));
       card.append(el('div', new Date(receipt.paidAt).toLocaleString(), 'muted'));

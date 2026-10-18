@@ -22,7 +22,9 @@ public class PaymentController {
 
     /**
      * Guest starts paying their table's bill online. Body is optional:
-     * {"phoneNumber": "5555 1234"} to earn loyalty points on the payment.
+     * {"phoneNumber": "5555 1234", "redeemDiscount": "true"}. The phone number earns loyalty
+     * points on the payment; redeemDiscount spends 500 of their points for 15% off the bill
+     * before the Stripe session is created (requires a phone number with enough points).
      * Returns the URL of Stripe's hosted payment page to redirect the guest to.
      */
     @PostMapping("/orders/table/{qrCodeHash}/pay/online")
@@ -30,7 +32,8 @@ public class PaymentController {
             @PathVariable String qrCodeHash,
             @RequestBody(required = false) Map<String, String> body) {
         String phone = (body == null) ? null : body.get("phoneNumber");
-        String checkoutUrl = stripeCheckoutService.createCheckoutSession(qrCodeHash, phone);
+        boolean redeemDiscount = body != null && "true".equalsIgnoreCase(body.get("redeemDiscount"));
+        String checkoutUrl = stripeCheckoutService.createCheckoutSession(qrCodeHash, phone, redeemDiscount);
         return Map.of("checkoutUrl", checkoutUrl);
     }
 
