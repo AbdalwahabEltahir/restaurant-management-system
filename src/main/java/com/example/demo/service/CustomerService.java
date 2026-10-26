@@ -69,17 +69,20 @@ public class CustomerService {
     }
 
     /**
-     * Redeems the loyalty discount (FR-4.4): a customer gets the best percentage off their
-     * bill that their points reach on the ladder (500 pts → 15%, 1000 → 25%, 2000 → 40% by
-     * default), and that tier's points are spent — not stacked with other tiers. Returns the
+     * Redeems the loyalty discount (FR-4.4): the customer picks which tier on the ladder to
+     * redeem (500 pts → 15%, 1000 → 25%, 2000 → 40% by default) rather than always getting the
+     * best one, and that tier's points are spent — not stacked with other tiers. Returns the
      * discount rate (e.g. 0.25 for 25%) to apply to the bill.
      */
-    public BigDecimal redeemLoyaltyDiscount(String customerId) {
+    public BigDecimal redeemLoyaltyDiscount(String customerId, int tierPoints) {
         Customer c = getById(customerId);
         DiscountTier tier = discountTiers.stream()
-                .filter(t -> c.getLoyaltyPoints() >= t.points())
+                .filter(t -> t.points() == tierPoints)
                 .findFirst()
-                .orElseThrow(() -> bad("Not enough points for the loyalty discount"));
+                .orElseThrow(() -> bad("Unknown loyalty discount tier"));
+        if (c.getLoyaltyPoints() < tier.points()) {
+            throw bad("Not enough points for that loyalty discount tier");
+        }
         c.setLoyaltyPoints(c.getLoyaltyPoints() - tier.points());
         customers.save(c);
         return tier.rate();

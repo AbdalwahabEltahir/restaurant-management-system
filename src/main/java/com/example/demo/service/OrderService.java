@@ -3,6 +3,8 @@ package com.example.demo.service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -163,6 +165,15 @@ public class OrderService {
     }
 
     /**
+     * Orders placed today, paid ones included and cancelled ones left out. "Today" starts
+     * at midnight in the server's time zone.
+     */
+    public long ordersPlacedToday() {
+        Instant midnight = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant();
+        return orders.countByCreatedAtGreaterThanEqualAndStatusNot(midnight, Order.Status.CANCELLED);
+    }
+
+    /**
      * Staff move an order one step (FR-1.3), for example Pending to Preparing.
      * Cancelling is only allowed while Pending. Paying goes through completePayment.
      */
@@ -213,10 +224,11 @@ public class OrderService {
     /**
      * Loads and validates a table's bill: the table must exist, have open orders, and every
      * open order must be Served. The phone number given wins for loyalty points; otherwise the
-     * number already linked to the table's orders is used, if any. If redeemDiscount is true,
-     * the customer must be known and have enough points (FR-4.4); their points are spent now.
+     * number already linked to the table's orders is used, if any. If discountTierPoints is
+     * given, the customer must be known and have enough points for that exact tier (FR-4.4);
+     * their points are spent now.
      */
-    private Bill loadBill(String qrCodeHash, String phoneNumber, boolean redeemDiscount) {
+    private Bill loadBill(String qrCodeHash, String phoneNumber, Integer discountTierPoints) {
         RestaurantTable table = findTable(qrCodeHash);
         List<Order> open = orders.findByTableIdAndStatusIn(table.getId(), OPEN);
         if (open.isEmpty()) {
@@ -238,11 +250,11 @@ public class OrderService {
         }
 
         BigDecimal discountRate = BigDecimal.ZERO;
-        if (redeemDiscount) {
+        if (discountTierPoints != null) {
             if (customer == null) {
                 throw bad("Enter a phone number to redeem the loyalty discount");
             }
-            discountRate = customerService.redeemLoyaltyDiscount(customer.getId());
+            discountRate = customerService.redeemLoyaltyDiscount(customer.getId(), discountTierPoints);
         }
         return new Bill(table, open, customer, discountRate);
     }
@@ -253,11 +265,11 @@ public class OrderService {
      * beginOnlineCheckout and finalizeOnlinePayment instead. Returns the receipt.
      */
     @Transactional
-    public Receipt completePayment(String qrCodeHash, String phoneNumber, boolean redeemDiscount) {
-        Bill bill = loadBill(qrCodeHash, phoneNumber, redeemDiscount);
+    public Receipt completePayment(String qrCodeHash, String phoneNumber, Integer discountTierPoints) {
+        Bill bill = loadBill(qrCodeHash, phoneNumber, discountTierPoints);
         Payment payment = new Payment(bill.table().getId(), idOf(bill.customer()), orderIdsOf(bill.openOrders()),
                 Payment.Method.COUNTER, bill.total(), Payment.Status.PAID);
-        payment.setDiscountApplied(redeemDiscount);
+        payment.setDiscountApplied(discountTierPoints != null);
         return settle(bill, payment);
     }
 
@@ -270,11 +282,11 @@ public class OrderService {
      * PENDING until Stripe confirms it.
      */
     @Transactional
-    public CheckoutInit beginOnlineCheckout(String qrCodeHash, String phoneNumber, boolean redeemDiscount) {
-        Bill bill = loadBill(qrCodeHash, phoneNumber, redeemDiscount);
+    public CheckoutInit beginOnlineCheckout(String qrCodeHash, String phoneNumber, Integer discountTierPoints) {
+        Bill bill = loadBill(qrCodeHash, phoneNumber, discountTierPoints);
         Payment payment = new Payment(bill.table().getId(), idOf(bill.customer()), orderIdsOf(bill.openOrders()),
                 Payment.Method.STRIPE, bill.total(), Payment.Status.PENDING);
-        payment.setDiscountApplied(redeemDiscount);
+        payment.setDiscountApplied(discountTierPoints != null);
         return new CheckoutInit(payments.save(payment), bill.table().getTableNumber());
     }
 
