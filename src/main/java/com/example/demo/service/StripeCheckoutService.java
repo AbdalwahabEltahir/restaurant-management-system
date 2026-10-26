@@ -36,8 +36,8 @@ public class StripeCheckoutService {
      * Starts an online payment for a table's bill. Returns the URL of Stripe's own hosted
      * payment page, where the guest enters their card; we never see or store the card itself.
      */
-    public String createCheckoutSession(String qrCodeHash, String phoneNumber, boolean redeemDiscount) {
-        OrderService.CheckoutInit init = orderService.beginOnlineCheckout(qrCodeHash, phoneNumber, redeemDiscount);
+    public String createCheckoutSession(String qrCodeHash, String phoneNumber, Integer discountTierPoints) {
+        OrderService.CheckoutInit init = orderService.beginOnlineCheckout(qrCodeHash, phoneNumber, discountTierPoints);
         String tableUrl = baseUrl + "/?t=" + qrCodeHash;
 
         SessionCreateParams params = SessionCreateParams.builder()

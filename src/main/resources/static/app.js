@@ -23,13 +23,15 @@ function timeText(value) {
 }
 
 // A page header banner: a small illustration with a short quote beside it. The
-// "modifier" class picks the image (see style.css's .banner-* rules).
-function pageBanner(modifier, quote) {
+// "modifier" class picks the image (see style.css's .banner-* rules). An optional
+// "aside" element sits on a cream panel at the banner's right end.
+function pageBanner(modifier, quote, aside) {
   const banner = el('div', null, 'page-banner ' + modifier);
   banner.append(el('div', null, 'page-banner-image'));
   const quoteBox = el('div', null, 'page-banner-quote');
   quoteBox.append(el('span', null, 'fa-solid fa-quote-left'), el('span', quote));
   banner.append(quoteBox);
+  if (aside) banner.append(aside);
   return banner;
 }
 
@@ -44,6 +46,55 @@ const LOYALTY_DISCOUNT_TIERS = [
 
 function loyaltyDiscountForPoints(points) {
   return LOYALTY_DISCOUNT_TIERS.find(t => points >= t.points) || null;
+}
+
+// Builds the three mutually-exclusive "redeem for X% off" checkboxes (one per tier, lowest
+// points first). Each box is only enabled once `getPoints()` reaches that tier's threshold;
+// checking one unchecks the others, since tiers are never combined. `onChange` is called after
+// every tick so the caller can redraw totals.
+function buildLoyaltyTierCheckboxes(getPoints, onChange) {
+  const tiers = [...LOYALTY_DISCOUNT_TIERS].sort((a, b) => a.points - b.points);
+  const boxes = [];
+  const labels = [];
+  for (const tier of tiers) {
+    const input = el('input');
+    input.type = 'checkbox';
+    input.dataset.points = tier.points;
+    input.dataset.rate = tier.rate;
+    const label = el('label', null, 'checkbox-row');
+    label.append(input, ' Redeem ' + tier.points + ' points for ' + Math.round(tier.rate * 100) + '% off');
+    input.onchange = () => {
+      if (input.checked) {
+        for (const other of boxes) {
+          if (other !== input) other.checked = false;
+        }
+      }
+      onChange();
+    };
+    boxes.push(input);
+    labels.push(label);
+  }
+
+  const container = el('div', null, 'loyalty-tiers');
+  container.append(...labels);
+
+  function refreshAvailability() {
+    const points = getPoints();
+    boxes.forEach((box, i) => {
+      const eligible = points != null && points >= Number(box.dataset.points);
+      box.disabled = !eligible;
+      labels[i].classList.toggle('disabled', !eligible);
+      if (!eligible) box.checked = false;
+    });
+  }
+
+  function selectedTier() {
+    const checked = boxes.find(b => b.checked);
+    return checked ? { points: Number(checked.dataset.points), rate: Number(checked.dataset.rate) } : null;
+  }
+
+  refreshAvailability();
+  return { container, refreshAvailability, selectedTier };
 }
 
 function minutesSince(value) {

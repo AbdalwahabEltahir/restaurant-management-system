@@ -2,11 +2,13 @@ package com.example.demo.controller;
 
 import java.util.Map;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.example.demo.service.StripeCheckoutService;
 
@@ -22,10 +24,11 @@ public class PaymentController {
 
     /**
      * Guest starts paying their table's bill online. Body is optional:
-     * {"phoneNumber": "5555 1234", "redeemDiscount": "true"}. The phone number earns loyalty
-     * points on the payment; redeemDiscount spends points for a discount off the bill, at the
-     * best tier the customer's points reach (see CustomerService.redeemLoyaltyDiscount),
-     * before the Stripe session is created (requires a phone number with enough points).
+     * {"phoneNumber": "5555 1234", "discountTier": "2000"}. The phone number earns loyalty
+     * points on the payment; discountTier is the points threshold of the tier the customer
+     * picked (500, 1000 or 2000 by default - see CustomerService.redeemLoyaltyDiscount) and
+     * spends exactly that many points, before the Stripe session is created (requires a phone
+     * number with enough points for that tier).
      * Returns the URL of Stripe's hosted payment page to redirect the guest to.
      */
     @PostMapping("/orders/table/{qrCodeHash}/pay/online")
@@ -33,9 +36,21 @@ public class PaymentController {
             @PathVariable String qrCodeHash,
             @RequestBody(required = false) Map<String, String> body) {
         String phone = (body == null) ? null : body.get("phoneNumber");
-        boolean redeemDiscount = body != null && "true".equalsIgnoreCase(body.get("redeemDiscount"));
-        String checkoutUrl = stripeCheckoutService.createCheckoutSession(qrCodeHash, phone, redeemDiscount);
+        Integer discountTier = parseDiscountTier(body);
+        String checkoutUrl = stripeCheckoutService.createCheckoutSession(qrCodeHash, phone, discountTier);
         return Map.of("checkoutUrl", checkoutUrl);
+    }
+
+    private static Integer parseDiscountTier(Map<String, String> body) {
+        String raw = (body == null) ? null : body.get("discountTier");
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(raw);
+        } catch (NumberFormatException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "discountTier must be a number of points");
+        }
     }
 
     /**

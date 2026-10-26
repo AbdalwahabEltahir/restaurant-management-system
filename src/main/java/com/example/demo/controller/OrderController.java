@@ -74,6 +74,14 @@ public class OrderController {
         return orderService.openOrders();
     }
 
+    /** Dashboard count: orders placed today, paid included, cancelled left out. */
+    @GetMapping("/staff/orders/today")
+    public Map<String, Long> today(
+            @RequestHeader(value = "Authorization", required = false) String auth) {
+        userService.authorize(auth, "orders");
+        return Map.of("totalOrders", orderService.ordersPlacedToday());
+    }
+
     /** Move an order one step. Body: {"status": "PREPARING"} */
     @PatchMapping("/staff/orders/{id}/status")
     public Order updateStatus(
@@ -93,10 +101,10 @@ public class OrderController {
 
     /**
      * Staff confirm that the table paid at the counter and get the receipt.
-     * Body is optional: {"phoneNumber": "5555 1234", "redeemDiscount": "true"}. The phone
-     * number adds loyalty points for that customer; redeemDiscount spends points for a
-     * discount off the bill, at the best tier the customer's points reach (requires a phone
-     * number with enough points).
+     * Body is optional: {"phoneNumber": "5555 1234", "discountTier": "2000"}. The phone number
+     * adds loyalty points for that customer; discountTier is the points threshold of the tier
+     * the customer picked (500, 1000 or 2000 by default) and spends exactly that many points
+     * (requires a phone number with enough points for that tier).
      */
     @PostMapping("/staff/orders/table/{qrCodeHash}/pay")
     public OrderService.Receipt pay(
@@ -105,7 +113,19 @@ public class OrderController {
             @RequestBody(required = false) Map<String, String> body) {
         userService.authorize(auth, "orders");
         String phone = (body == null) ? null : body.get("phoneNumber");
-        boolean redeemDiscount = body != null && "true".equalsIgnoreCase(body.get("redeemDiscount"));
-        return orderService.completePayment(qrCodeHash, phone, redeemDiscount);
+        Integer discountTier = parseDiscountTier(body);
+        return orderService.completePayment(qrCodeHash, phone, discountTier);
+    }
+
+    private static Integer parseDiscountTier(Map<String, String> body) {
+        String raw = (body == null) ? null : body.get("discountTier");
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(raw);
+        } catch (NumberFormatException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "discountTier must be a number of points");
+        }
     }
 }

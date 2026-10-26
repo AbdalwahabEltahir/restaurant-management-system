@@ -2,6 +2,7 @@ package com.example.demo.repository;
 
 
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 
@@ -14,4 +15,6 @@ public interface OrderRepository extends MongoRepository<Order, String> {
     List<Order> findByTableIdAndStatusIn(String tableId, Collection<Order.Status> statuses);
 
     List<Order> findByStatusInOrderByCreatedAtAsc(Collection<Order.Status> statuses);
+
+    long countByCreatedAtGreaterThanEqualAndStatusNot(Instant since, Order.Status status);
 }

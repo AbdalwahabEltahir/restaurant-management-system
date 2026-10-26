@@ -7,8 +7,50 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body class="guest-page">
+  <!-- Decorative header and hero only: no ids, nothing the scripts below touch. -->
+  <div class="top-strip">
+    <span><i class="fa-solid fa-clock"></i> Open daily · Fresh from the grill</span>
+    <span class="top-strip-social"><i class="fa-brands fa-facebook-f"></i><i class="fa-brands fa-instagram"></i><i class="fa-brands fa-twitter"></i></span>
+  </div>
+  <header class="site-header">
+    <div class="brand-mark"><span class="brand-logo"><i class="fa-solid fa-utensils"></i></span><span>Restaurant<small>Kitchen · Grill · Table</small></span></div>
+  </header>
+
+  <section class="guest-hero">
+    <div class="embers" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+    <div class="hero-card">
+      <div class="hero-pills">
+        <span><i class="fa-solid fa-compass"></i> Explore</span>
+        <span><i class="fa-solid fa-fire-flame-curved"></i> Taste</span>
+        <span><i class="fa-solid fa-heart"></i> Enjoy</span>
+      </div>
+      <h1 class="brand-title">Our Menu</h1>
+      <p class="hero-sub">Fresh dishes, made to order and sent straight from our kitchen to your table.</p>
+    </div>
+    <div class="hero-features">
+      <div><i class="fa-solid fa-book-open"></i><span>Browse</span></div>
+      <div><i class="fa-solid fa-basket-shopping"></i><span>Pick</span></div>
+      <div><i class="fa-solid fa-fire-burner"></i><span>We cook</span></div>
+      <div><i class="fa-solid fa-credit-card"></i><span>Pay</span></div>
+    </div>
+  </section>
+
+  <div class="ticker" aria-hidden="true">
+    <div class="ticker-track">
+      <span><i class="fa-solid fa-fire"></i> Grilled to order</span>
+      <span><i class="fa-solid fa-leaf"></i> Fresh ingredients daily</span>
+      <span><i class="fa-solid fa-pepper-hot"></i> Bold Mediterranean flavours</span>
+      <span><i class="fa-solid fa-mug-hot"></i> Hot drinks &amp; fresh juices</span>
+      <span><i class="fa-solid fa-star"></i> Earn loyalty points on every bill</span>
+      <span><i class="fa-solid fa-fire"></i> Grilled to order</span>
+      <span><i class="fa-solid fa-leaf"></i> Fresh ingredients daily</span>
+      <span><i class="fa-solid fa-pepper-hot"></i> Bold Mediterranean flavours</span>
+      <span><i class="fa-solid fa-mug-hot"></i> Hot drinks &amp; fresh juices</span>
+      <span><i class="fa-solid fa-star"></i> Earn loyalty points on every bill</span>
+    </div>
+  </div>
+
   <div class="page">
-    <h1 class="brand-title">Menu</h1>
     <p id="status" class="muted">Loading...</p>
     <p id="paid-banner" class="ok hidden">Payment received, thank you! Your bill below will update shortly.</p>
 
@@ -26,7 +68,8 @@
       <h2>Pay your bill</h2>
       <div class="card">
         <p id="pay-total" class="name"></p>
-        <label class="checkbox-row"><input id="redeem-discount" type="checkbox"> Redeem loyalty points for a discount (enter your phone number in Loyalty points below first)</label>
+        <div id="discount-tiers"></div>
+        <p id="discount-hint" class="muted"></p>
         <p class="muted">You'll enter your card details on Stripe's secure payment page. We never see or store your card.</p>
         <button id="pay-button">Pay online</button>
         <p id="pay-result" class="muted"></p>
@@ -49,6 +92,17 @@
       </div>
     </div>
   </div>
+
+  <!-- Decorative footer only: no ids, nothing the scripts touch. -->
+  <footer class="site-footer">
+    <div class="footer-grid">
+      <div class="brand-mark"><span class="brand-logo"><i class="fa-solid fa-utensils"></i></span><span>Restaurant<small>Kitchen · Grill · Table</small></span></div>
+      <div class="footer-item"><i class="fa-solid fa-kitchen-set"></i><span>Made fresh to order</span></div>
+      <div class="footer-item"><i class="fa-solid fa-qrcode"></i><span>Scan · Order · Enjoy</span></div>
+      <div class="footer-item"><i class="fa-solid fa-bell-concierge"></i><span>Ask our staff anything</span></div>
+    </div>
+    <p class="footer-note">Thank you for dining with us</p>
+  </footer>
 
   <!-- Chatbot: a button at the bottom right opens the chat box -->
   <button id="chat-open" class="hidden">Ask about the food</button>
@@ -272,22 +326,25 @@
     // for the wrong customer. The server always recalculates the real amount at payment.
     let knownLoyaltyPoints = null;
 
-    // Shows the discounted estimate once the guest ticks the redeem checkbox, using
-    // whichever tier their last-checked points balance reaches.
+    // Three mutually-exclusive checkboxes, one per discount tier, each enabled only once
+    // knownLoyaltyPoints reaches that tier's threshold.
+    const loyaltyTiers = buildLoyaltyTierCheckboxes(() => knownLoyaltyPoints, drawPayTotal);
+    document.getElementById('discount-tiers').append(loyaltyTiers.container);
+
+    // Shows the discounted estimate once the guest ticks one of the tier checkboxes.
     function drawPayTotal() {
-      const redeemDiscount = document.getElementById('redeem-discount').checked;
+      const tier = loyaltyTiers.selectedTier();
       let total = lastTableTotal;
       let note = '';
-      if (redeemDiscount) {
-        const tier = knownLoyaltyPoints == null ? null : loyaltyDiscountForPoints(knownLoyaltyPoints);
-        if (tier) {
-          total = lastTableTotal * (1 - tier.rate);
-          note = ' (' + Math.round(tier.rate * 100) + '% loyalty discount applied)';
-        } else if (knownLoyaltyPoints == null) {
-          note = ' (check your points above to preview the discount)';
-        } else {
-          note = ' (not enough points yet for a discount)';
-        }
+      const hint = document.getElementById('discount-hint');
+      if (tier) {
+        total = lastTableTotal * (1 - tier.rate);
+        note = ' (' + Math.round(tier.rate * 100) + '% loyalty discount applied)';
+        hint.textContent = '';
+      } else if (knownLoyaltyPoints == null) {
+        hint.textContent = 'Check your points below to unlock a discount tier.';
+      } else {
+        hint.textContent = 'Not enough points yet for a discount.';
       }
       document.getElementById('pay-total').textContent = 'Total to pay: ' + money(total) + note;
     }
@@ -300,10 +357,10 @@
       result.textContent = 'Taking you to the payment page...';
       try {
         const phoneNumber = document.getElementById('phone').value;
-        const redeemDiscount = document.getElementById('redeem-discount').checked;
+        const tier = loyaltyTiers.selectedTier();
         const body = {};
         if (phoneNumber) body.phoneNumber = phoneNumber;
-        if (redeemDiscount) body.redeemDiscount = 'true';
+        if (tier) body.discountTier = String(tier.points);
         const session = await api('/api/orders/table/' + encodeURIComponent(code) + '/pay/online',
                                    'POST', body);
         location.href = session.checkoutUrl;
@@ -359,7 +416,6 @@
 
     document.getElementById('order-send').onclick = sendOrder;
     document.getElementById('pay-button').onclick = payOnline;
-    document.getElementById('redeem-discount').onchange = drawPayTotal;
 
     document.getElementById('points-button').onclick = async () => {
       const result = document.getElementById('points-result');
@@ -368,6 +424,7 @@
         result.className = 'ok';
         result.textContent = customer.tierLevel + ' · ' + customer.loyaltyPoints + ' points · ' + customer.totalOrders + ' paid orders';
         knownLoyaltyPoints = customer.loyaltyPoints;
+        loyaltyTiers.refreshAvailability();
         drawPayTotal();
       } catch (e) {
         result.className = 'error';
@@ -377,7 +434,11 @@
 
     // A different phone number means a different points balance, so drop the cached
     // one rather than preview a discount that belongs to whoever was typed before.
-    document.getElementById('phone').oninput = () => { knownLoyaltyPoints = null; drawPayTotal(); };
+    document.getElementById('phone').oninput = () => {
+      knownLoyaltyPoints = null;
+      loyaltyTiers.refreshAvailability();
+      drawPayTotal();
+    };
 
     start().catch(() => {
       statusEl.textContent = 'Could not load the menu.';
